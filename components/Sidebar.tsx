@@ -1,10 +1,16 @@
 'use client';
 
 import { useRouter, usePathname } from 'next/navigation';
+import { clearAuthToken } from '@/lib/storage';
 
 export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
+
+  const handleLogout = () => {
+    clearAuthToken();
+    router.push('/login');
+  };
 
   const navigationItems = [
     {
@@ -20,14 +26,14 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-64 bg-[#1a1a1a] text-white h-screen flex flex-col">
+    <div className="w-64 bg-white border-r border-gray-200 text-gray-900 h-screen flex flex-col">
       {/* Logo */}
-      <div className="p-6 border-b border-gray-800">
+      <div className="p-6 border-b border-gray-200">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-orange-500 rounded flex items-center justify-center">
             <span className="text-white font-bold text-lg">V</span>
           </div>
-          <span className="text-xl font-semibold">Vendor Portal</span>
+          <span className="text-xl font-semibold text-gray-900">Vendor Portal</span>
         </div>
       </div>
 
@@ -43,7 +49,7 @@ export default function Sidebar() {
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                     isActive
                       ? 'bg-orange-500 text-white'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
                   }`}
                 >
                   {item.icon}
@@ -56,12 +62,17 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-gray-800">
-        <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-800 hover:text-white transition-colors">
+      <div className="p-4 border-t border-gray-200">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+        >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 18l6-6-6-6"></path>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
           </svg>
-          <span className="font-medium">Exit to Admin</span>
+          <span className="font-medium">Logout</span>
         </button>
       </div>
     </div>

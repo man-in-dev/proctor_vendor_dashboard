@@ -13,14 +13,10 @@ export default function TopBar() {
   return (
     <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 bg-orange-500 rounded flex items-center justify-center">
-          <span className="text-white font-bold text-sm">V</span>
-        </div>
-        <span className="text-lg font-semibold text-gray-900">Vendor Portal</span>
+        <span className="text-gray-700 font-medium">Welcome, Vendor</span>
       </div>
 
       <div className="flex items-center gap-4">
-        <span className="text-gray-700 font-medium">Welcome, Vendor</span>
         <button
           onClick={handleLogout}
           className="flex items-center gap-2 text-gray-700 hover:text-orange-500 transition-colors"
