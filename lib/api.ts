@@ -208,6 +208,127 @@ export async function updateVendorProfile(token: string, profileData: Partial<Ve
 }
 
 /**
+ * Generate presigned URL for catalog PDF upload to S3
+ * Calls: POST /api/vendor/catalog/presigned-url
+ */
+export async function generatePresignedUrl(token: string, fileName: string): Promise<{
+  presignedUrl: string;
+  s3Url: string;
+  key: string;
+  fileName: string;
+}> {
+  const response = await fetch(`${API_URL}/api/vendor/catalog/presigned-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ fileName }),
+  });
+
+  const responseData: ApiSuccessResponse<{
+    presignedUrl: string;
+    s3Url: string;
+    key: string;
+    fileName: string;
+  }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to generate presigned URL');
+  }
+
+  return (responseData as ApiSuccessResponse<{
+    presignedUrl: string;
+    s3Url: string;
+    key: string;
+    fileName: string;
+  }>).data;
+}
+
+/**
+ * Upload catalog PDF directly to S3 using presigned URL
+ * This uploads the file directly to S3, bypassing the server
+ */
+export async function uploadCatalogPdfToS3(
+  presignedUrl: string,
+  file: File
+): Promise<void> {
+  const response = await fetch(presignedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/pdf',
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload file to S3: ${response.statusText}`);
+  }
+}
+
+/**
+ * Confirm catalog upload and save to profile
+ * Calls: POST /api/vendor/catalog/confirm-upload
+ */
+export async function confirmCatalogUpload(
+  token: string,
+  s3Url: string,
+  fileName: string,
+  catalogName?: string,
+  description?: string
+): Promise<Catalog> {
+  const response = await fetch(`${API_URL}/api/vendor/catalog/confirm-upload`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      s3Url,
+      fileName,
+      catalogName,
+      description,
+    }),
+  });
+
+  const responseData: ApiSuccessResponse<{ catalog: Catalog }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to confirm catalog upload');
+  }
+
+  return (responseData as ApiSuccessResponse<{ catalog: Catalog }>).data.catalog;
+}
+
+/**
+ * Upload catalog PDF to S3 (convenience function that combines all steps)
+ * Calls: POST /api/vendor/catalog/presigned-url, then PUT to S3, then POST /api/vendor/catalog/confirm-upload
+ */
+export async function uploadCatalogPdf(
+  token: string,
+  file: File,
+  catalogName?: string,
+  description?: string
+): Promise<{ url: string; fileName: string; fileSize: number }> {
+  // Step 1: Generate presigned URL
+  const { presignedUrl, s3Url } = await generatePresignedUrl(token, file.name);
+
+  // Step 2: Upload file directly to S3
+  await uploadCatalogPdfToS3(presignedUrl, file);
+
+  // Step 3: Confirm upload and save to profile
+  await confirmCatalogUpload(token, s3Url, file.name, catalogName, description);
+
+  return {
+    url: s3Url,
+    fileName: file.name,
+    fileSize: file.size,
+  };
+}
+
+/**
  * Get Google OAuth authorization URL
  * Calls: GET /api/auth/google?redirect=<redirect_url>
  * @param redirectUrl - Optional URL to redirect to after OAuth success
@@ -236,4 +357,3 @@ export async function getGoogleAuthUrl(redirectUrl?: string): Promise<string> {
 
   return (responseData as ApiSuccessResponse<{ authUrl: string }>).data.authUrl;
 }
-

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getAuthToken } from '@/lib/storage';
-import { getVendorProfile, updateVendorProfile, VendorProfile as VendorProfileType } from '@/lib/api';
+import { getVendorProfile, updateVendorProfile, uploadCatalogPdf, VendorProfile as VendorProfileType } from '@/lib/api';
 
 interface ContactDetail {
   id: string;
@@ -26,6 +26,7 @@ interface Catalog {
   description: string;
   pdfFile: File | null;
   pdfFileName: string;
+  pdfUrl?: string; // S3 URL
 }
 
 interface Industry {
@@ -44,6 +45,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState<string | null>(null); // Track which catalog is uploading
 
   const [contactDetails, setContactDetails] = useState<ContactDetail[]>([]);
   const [businessAddresses, setBusinessAddresses] = useState<BusinessAddress[]>([]);
@@ -122,6 +124,7 @@ export default function ProfilePage() {
             description: catalog.description || '',
             pdfFile: null,
             pdfFileName: catalog.pdfFileName || '',
+            pdfUrl: catalog.pdfUrl,
           }))
         );
         
@@ -184,9 +187,9 @@ export default function ProfilePage() {
         })),
         catalogs: catalogs.map(catalog => ({
           name: catalog.name,
-          description: catalog.description || undefined,
-          pdfFileName: catalog.pdfFileName || undefined,
-          // Note: PDF file upload would need separate endpoint for actual file upload
+          description: catalog.description || '',
+          pdfFileName: catalog.pdfFileName,
+          pdfUrl: catalog.pdfUrl,
         })),
         industries: industries.map(industry => industry.name),
         bankDetails: {
@@ -283,9 +286,11 @@ export default function ProfilePage() {
     }));
   };
 
-  const handlePdfUpload = (id: string, event: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePdfUpload = async (id: string, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
+    if (!file) return;
+
+    try {
       if (file.type !== 'application/pdf') {
         alert('Please upload a PDF file only');
         return;
@@ -294,11 +299,35 @@ export default function ProfilePage() {
         alert('File size should be less than 10MB');
         return;
       }
-      const catalog = catalogs.find(c => c.id === id);
-      if (catalog) {
-        updateCatalog(id, 'pdfFile', file);
-        updateCatalog(id, 'pdfFileName', file.name);
+
+      setUploadingPdf(id);
+      const token = getAuthToken();
+      if (!token) {
+        alert('Not authenticated');
+        setUploadingPdf(null);
+        return;
       }
+
+      // Get catalog info
+      const catalog = catalogs.find(c => c.id === id);
+      
+      // Upload to S3 using presigned URL (direct upload)
+      const result = await uploadCatalogPdf(
+        token, 
+        file,
+        catalog?.name || file.name.replace('.pdf', ''),
+        catalog?.description
+      );
+
+      // Update catalog with S3 URL
+      updateCatalog(id, 'pdfFile', file);
+      updateCatalog(id, 'pdfFileName', result.fileName);
+      updateCatalog(id, 'pdfUrl', result.url);
+    } catch (err: any) {
+      console.error('Error uploading PDF:', err);
+      alert(err.message || 'Failed to upload PDF');
+    } finally {
+      setUploadingPdf(null);
     }
   };
 
@@ -1063,7 +1092,14 @@ export default function ProfilePage() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Catalog PDF
                     </label>
-                    {!catalog.pdfFile ? (
+                    {uploadingPdf === catalog.id ? (
+                      <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
+                        <div className="flex items-center gap-3">
+                          <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                          <p className="text-sm text-gray-600">Uploading PDF...</p>
+                        </div>
+                      </div>
+                    ) : !catalog.pdfFile && !catalog.pdfUrl ? (
                       <div className="mt-1">
                         <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
                           <div className="flex flex-col items-center justify-center pt-5 pb-6">
@@ -1080,6 +1116,7 @@ export default function ProfilePage() {
                             accept="application/pdf"
                             onChange={(e) => handlePdfUpload(catalog.id, e)}
                             className="hidden"
+                            disabled={uploadingPdf === catalog.id}
                           />
                         </label>
                       </div>
@@ -1095,9 +1132,23 @@ export default function ProfilePage() {
                             <p className="text-sm font-medium text-gray-900 truncate">
                               {catalog.pdfFileName}
                             </p>
-                            <p className="text-xs text-gray-500">
-                              {(catalog.pdfFile.size / (1024 * 1024)).toFixed(2)} MB
-                            </p>
+                            <div className="flex items-center gap-2">
+                              {catalog.pdfFile && (
+                                <p className="text-xs text-gray-500">
+                                  {(catalog.pdfFile.size / (1024 * 1024)).toFixed(2)} MB
+                                </p>
+                              )}
+                              {catalog.pdfUrl && (
+                                <a
+                                  href={catalog.pdfUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-orange-500 hover:text-orange-600 underline"
+                                >
+                                  View PDF
+                                </a>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <button
