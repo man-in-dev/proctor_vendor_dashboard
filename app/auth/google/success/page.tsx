@@ -12,6 +12,7 @@ function GoogleAuthSuccessContent() {
     const handleAuthSuccess = async () => {
       const token = searchParams.get('token');
       const error = searchParams.get('error');
+      // Default to /profile instead of / to avoid redirect chain
       const redirect = searchParams.get('redirect') || '/profile';
 
       if (error) {
@@ -22,11 +23,18 @@ function GoogleAuthSuccessContent() {
 
       if (token) {
         try {
-          // Store token
+          // Store token synchronously
           saveAuthToken(token);
           
-          // Redirect to profile page
-          router.push(redirect);
+          // Small delay to ensure token is saved before navigation
+          // This prevents race conditions with ProtectedRoute checks
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Normalize redirect path - if it's just '/', redirect to /profile
+          const redirectPath = redirect === '/' ? '/profile' : redirect;
+          
+          // Redirect to the intended page
+          router.push(redirectPath);
         } catch (err) {
           console.error('Error storing token:', err);
           router.push('/login?error=oauth_failed');

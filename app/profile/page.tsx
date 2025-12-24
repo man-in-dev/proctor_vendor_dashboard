@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getAuthToken } from '@/lib/storage';
-import { getVendorProfile, updateVendorProfile, uploadCatalogPdf, VendorProfile as VendorProfileType } from '@/lib/api';
+import { getVendorProfile, updateVendorProfile, uploadCatalogPdf, getCatalogSignedUrl, VendorProfile as VendorProfileType } from '@/lib/api';
 
 interface ContactDetail {
   id: string;
@@ -46,6 +46,7 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState<string | null>(null); // Track which catalog is uploading
+  const [viewingPdf, setViewingPdf] = useState<string | null>(null); // Track which catalog is loading signed URL
 
   const [contactDetails, setContactDetails] = useState<ContactDetail[]>([]);
   const [businessAddresses, setBusinessAddresses] = useState<BusinessAddress[]>([]);
@@ -334,6 +335,30 @@ export default function ProfilePage() {
   const removePdfFile = (id: string) => {
     updateCatalog(id, 'pdfFile', null);
     updateCatalog(id, 'pdfFileName', '');
+  };
+
+  const handleViewPdf = async (catalogId: string, catalogIndex: number) => {
+    try {
+      setViewingPdf(catalogId);
+      setError(null);
+      const token = getAuthToken();
+      if (!token) {
+        setError('Not authenticated');
+        return;
+      }
+
+      // Get signed URL for the catalog
+      const signedUrl = await getCatalogSignedUrl(token, catalogIndex);
+      
+      // Open PDF in new tab
+      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      console.error('Error getting signed URL:', err);
+      setError(err.message || 'Failed to open PDF');
+      alert(err.message || 'Failed to open PDF. Please try again.');
+    } finally {
+      setViewingPdf(null);
+    }
   };
 
   // Industry management
@@ -1139,14 +1164,21 @@ export default function ProfilePage() {
                                 </p>
                               )}
                               {catalog.pdfUrl && (
-                                <a
-                                  href={catalog.pdfUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-orange-500 hover:text-orange-600 underline"
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    // Find the index of this catalog in the catalogs array
+                                    const catalogIndex = catalogs.findIndex(c => c.id === catalog.id);
+                                    if (catalogIndex !== -1) {
+                                      // Convert from 1-based to 0-based index (backend expects 0-based)
+                                      handleViewPdf(catalog.id, catalogIndex);
+                                    }
+                                  }}
+                                  disabled={viewingPdf === catalog.id}
+                                  className="text-xs text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  View PDF
-                                </a>
+                                  {viewingPdf === catalog.id ? 'Opening...' : 'View PDF'}
+                                </button>
                               )}
                             </div>
                           </div>

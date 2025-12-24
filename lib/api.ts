@@ -329,6 +329,32 @@ export async function uploadCatalogPdf(
 }
 
 /**
+ * Get signed URL for viewing a catalog PDF
+ * Calls: GET /api/vendor/catalog/:catalogIndex/signed-url
+ * @param token - JWT authentication token
+ * @param catalogIndex - Index of the catalog in the vendor's catalog array (0-based)
+ * @returns Signed URL that can be used to access the PDF
+ */
+export async function getCatalogSignedUrl(token: string, catalogIndex: number): Promise<string> {
+  const response = await fetch(`${API_URL}/api/vendor/catalog/${catalogIndex}/signed-url`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const responseData: ApiSuccessResponse<{ signedUrl: string }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to get signed URL');
+  }
+
+  return (responseData as ApiSuccessResponse<{ signedUrl: string }>).data.signedUrl;
+}
+
+/**
  * Get Google OAuth authorization URL
  * Calls: GET /api/auth/google?redirect=<redirect_url>
  * @param redirectUrl - Optional URL to redirect to after OAuth success
