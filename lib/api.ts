@@ -383,3 +383,115 @@ export async function getGoogleAuthUrl(redirectUrl?: string): Promise<string> {
 
   return (responseData as ApiSuccessResponse<{ authUrl: string }>).data.authUrl;
 }
+
+// RFQ Request Types
+export interface RfqRequest {
+  rfqId: string;
+  assignmentId: string;
+  enquiryProductId: string;
+  productName: string;
+  quantity: string;
+  targetUnitPrice: string;
+  buyer: {
+    name: string;
+    email: string;
+  };
+  deadline: string;
+  vendorStatus: string;
+  createdAt?: string;
+}
+
+/**
+ * Get RFQ requests for the authenticated vendor
+ * Calls: GET /api/vendor/rfqs
+ */
+export async function getVendorRfqs(token: string): Promise<RfqRequest[]> {
+  const response = await fetch(`${API_URL}/api/vendor/rfqs`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const responseData: ApiSuccessResponse<{ rfqs: RfqRequest[] }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to get RFQ requests');
+  }
+
+  return (responseData as ApiSuccessResponse<{ rfqs: RfqRequest[] }>).data.rfqs;
+}
+
+// Quote Types
+export interface Quote {
+  _id?: string;
+  vendorAssignmentId: string;
+  unitPrice?: string;
+  deliveryDate?: string;
+  validTill?: string;
+  description?: string;
+  attachment?: string;
+  visibletoClient: boolean;
+  quoteStatus: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateQuotePayload {
+  vendorAssignmentId: string;
+  unitPrice?: string;
+  deliveryDate?: string;
+  validTill?: string;
+  description?: string;
+  attachment?: string;
+  quoteStatus?: string;
+}
+
+/**
+ * Create a new quote
+ * Calls: POST /api/vendor/quotes
+ */
+export async function createQuote(token: string, payload: CreateQuotePayload): Promise<Quote> {
+  const response = await fetch(`${API_URL}/api/vendor/quotes`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const responseData: ApiSuccessResponse<{ quote: Quote }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to create quote');
+  }
+
+  return (responseData as ApiSuccessResponse<{ quote: Quote }>).data.quote;
+}
+
+/**
+ * Get all quotes for the authenticated vendor
+ * Calls: GET /api/vendor/quotes
+ */
+export async function getVendorQuotes(token: string): Promise<Quote[]> {
+  const response = await fetch(`${API_URL}/api/vendor/quotes`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const responseData: ApiSuccessResponse<{ quotes: Quote[] }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to get quotes');
+  }
+
+  return (responseData as ApiSuccessResponse<{ quotes: Quote[] }>).data.quotes;
+}

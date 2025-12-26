@@ -1,12 +1,13 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { clearAuthToken } from '@/lib/storage';
 
 export default function TopBar() {
   const router = useRouter();
 
   const handleLogout = () => {
-    // Add logout logic here
+    clearAuthToken();
     router.push('/login');
   };
 
@@ -16,7 +17,7 @@ export default function TopBar() {
         <span className="text-gray-700 font-medium">Welcome, Vendor</span>
       </div>
 
-      <div className="flex items-center gap-4">
+      {/* <div className="flex items-center gap-4">
         <button
           onClick={handleLogout}
           className="flex items-center gap-2 text-gray-700 hover:text-orange-500 transition-colors"
@@ -26,7 +27,7 @@ export default function TopBar() {
             <path d="M9 18l6-6-6-6"></path>
           </svg>
         </button>
-      </div>
+      </div> */}
     </header>
   );
 }

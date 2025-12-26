@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import Sidebar from './Sidebar';
+import TopBar from './TopBar';
 import ProtectedRoute from './ProtectedRoute';
 
 export default function AuthLayout({
@@ -21,6 +22,7 @@ export default function AuthLayout({
       <div className="flex h-screen bg-gray-50">
         <Sidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
+          <TopBar />
           <main className="flex-1 overflow-y-auto">
             {children}
           </main>
