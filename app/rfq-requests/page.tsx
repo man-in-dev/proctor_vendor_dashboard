@@ -2,16 +2,19 @@
 
 import { useState, useEffect } from 'react';
 import { getAuthToken } from '@/lib/storage';
-import { getVendorRfqs, createQuote, type RfqRequest, type CreateQuotePayload } from '@/lib/api';
+import { getVendorRfqs, createQuote, getVendorQuotes, uploadFile, getFileSignedUrl, type RfqRequest, type CreateQuotePayload, type Quote } from '@/lib/api';
 
 export default function RfqRequestsPage() {
   const [rfqs, setRfqs] = useState<RfqRequest[]>([]);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All Status');
   const [isQuoteFormOpen, setIsQuoteFormOpen] = useState(false);
+  const [isViewQuoteOpen, setIsViewQuoteOpen] = useState(false);
   const [selectedRfq, setSelectedRfq] = useState<RfqRequest | null>(null);
+  const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Form state
@@ -25,6 +28,7 @@ export default function RfqRequestsPage() {
 
   useEffect(() => {
     loadRfqs();
+    loadQuotes();
   }, []);
 
   const loadRfqs = async () => {
@@ -48,6 +52,18 @@ export default function RfqRequestsPage() {
     }
   };
 
+  const loadQuotes = async () => {
+    try {
+      const token = getAuthToken();
+      if (!token) return;
+
+      const quoteData = await getVendorQuotes(token);
+      setQuotes(quoteData);
+    } catch (err: any) {
+      console.error('Error loading quotes:', err);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     try {
       const date = new Date(dateString);
@@ -63,7 +79,7 @@ export default function RfqRequestsPage() {
       rfq.buyer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       rfq.rfqId.toLowerCase().includes(searchQuery.toLowerCase());
     
-    const matchesStatus = statusFilter === 'All Status' || rfq.vendorStatus === statusFilter;
+    const matchesStatus = statusFilter === 'All Status' || rfq.status === statusFilter;
     
     return matchesSearch && matchesStatus;
   });
@@ -71,12 +87,13 @@ export default function RfqRequestsPage() {
   const getStatusBadgeColor = (status: string) => {
     switch (status.toLowerCase()) {
       case 'new':
-      case 'invited':
         return 'bg-teal-100 text-teal-800';
-      case 'assigned':
+      case 'quote sent':
         return 'bg-blue-100 text-blue-800';
-      case 'completed':
-        return 'bg-gray-100 text-gray-800';
+      case 'accepted':
+        return 'bg-green-100 text-green-800';
+      case 'rejected':
+        return 'bg-red-100 text-red-800';
       default:
         return 'bg-teal-100 text-teal-800';
     }
@@ -93,6 +110,21 @@ export default function RfqRequestsPage() {
       description: '',
       attachment: null,
     });
+  };
+
+  const handleViewQuote = (rfq: RfqRequest) => {
+    const quote = quotes.find((q) => q.vendorAssignmentId._id === rfq.assignmentId);
+    if (quote) {
+      setSelectedRfq(rfq);
+      setSelectedQuote(quote);
+      setIsViewQuoteOpen(true);
+    }
+  };
+
+  const handleCloseViewQuote = () => {
+    setIsViewQuoteOpen(false);
+    setSelectedRfq(null);
+    setSelectedQuote(null);
   };
 
   const handleCloseQuoteForm = () => {
@@ -120,22 +152,36 @@ export default function RfqRequestsPage() {
         return;
       }
 
+      // Upload attachment to S3 if present
+      let attachmentUrl: string | undefined = undefined;
+      if (formData.attachment) {
+        try {
+          const uploadResult = await uploadFile(token, formData.attachment, 'vendor-quote-attachments');
+          attachmentUrl = uploadResult.url;
+        } catch (uploadError: any) {
+          setError(`Failed to upload attachment: ${uploadError.message}`);
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const quotePayload: CreateQuotePayload = {
         vendorAssignmentId: selectedRfq.assignmentId,
         unitPrice: formData.unitPrice,
         deliveryDate: formData.deliveryDate || undefined,
         validTill: formData.validTill || undefined,
         description: formData.description || undefined,
-        attachment: formData.attachment ? formData.attachment.name : undefined,
-        quoteStatus: 'Submitted',
+        attachment: attachmentUrl,
+        vendorStatus: 'sent',
       };
 
       await createQuote(token, quotePayload);
 
       // Show success and close
       handleCloseQuoteForm();
-      // Reload RFQs to update status
+      // Reload RFQs and quotes to update status
       loadRfqs();
+      loadQuotes();
     } catch (err: any) {
       setError(err.message || 'Failed to submit quote');
       console.error('Error submitting quote:', err);
@@ -147,6 +193,22 @@ export default function RfqRequestsPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFormData({ ...formData, attachment: e.target.files[0] });
+    }
+  };
+
+  const handleViewQuoteAttachment = async () => {
+    if (!selectedQuote || !selectedQuote.attachment) return;
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        setError('Not authenticated');
+        return;
+      }
+      const signedUrl = await getFileSignedUrl(token, selectedQuote.attachment);
+      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      console.error('Failed to open attachment:', err);
+      setError(err.message || 'Failed to open attachment');
     }
   };
 
@@ -210,10 +272,10 @@ export default function RfqRequestsPage() {
           className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
         >
           <option>All Status</option>
-          <option>New</option>
-          <option>Assigned</option>
-          <option>Invited</option>
-          <option>Completed</option>
+          <option>new</option>
+          <option>quote sent</option>
+          <option>Accepted</option>
+          <option>Rejected</option>
         </select>
       </div>
 
@@ -242,8 +304,8 @@ export default function RfqRequestsPage() {
                 <div className="flex-1">
                   <div className="flex items-start gap-3 mb-2">
                     <h3 className="text-xl font-semibold text-gray-900">{rfq.productName}</h3>
-                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusBadgeColor(rfq.vendorStatus)}`}>
-                      {rfq.vendorStatus === 'Invited' ? 'New' : rfq.vendorStatus}
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusBadgeColor(rfq.status)}`}>
+                      {rfq.status === 'new' ? 'New' : rfq.status === 'quote sent' ? 'Quote Sent' : rfq.status}
                     </span>
                   </div>
                   
@@ -279,16 +341,29 @@ export default function RfqRequestsPage() {
 
                 {/* Right Section - Action Button */}
                 <div className="flex items-center">
-                  <button 
-                    onClick={() => handleOpenQuoteForm(rfq)}
-                    className="px-6 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors font-medium flex items-center gap-2 whitespace-nowrap"
-                  >
-                    <span>Submit Quote</span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="5" y1="12" x2="19" y2="12"></line>
-                      <polyline points="12 5 19 12 12 19"></polyline>
-                    </svg>
-                  </button>
+                  {rfq.status === 'quote sent' ? (
+                    <button 
+                      onClick={() => handleViewQuote(rfq)}
+                      className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium flex items-center gap-2 whitespace-nowrap"
+                    >
+                      <span>View Quote</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => handleOpenQuoteForm(rfq)}
+                      className="px-6 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors font-medium flex items-center gap-2 whitespace-nowrap"
+                    >
+                      <span>Submit Quote</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                        <polyline points="12 5 19 12 12 19"></polyline>
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -452,6 +527,158 @@ export default function RfqRequestsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </>
+      )}
+
+      {/* View Quote Panel */}
+      {isViewQuoteOpen && selectedRfq && selectedQuote && (
+        <>
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 z-50 bg-black/50 transition-opacity duration-300"
+            onClick={handleCloseViewQuote}
+          />
+          
+          {/* Slide Out Panel */}
+          <div 
+            className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-2xl bg-white shadow-xl flex flex-col transform transition-transform duration-300 ease-out"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">View Quote</h2>
+                <p className="text-sm text-gray-500 mt-1">{selectedRfq.productName} - {selectedRfq.rfqId}</p>
+              </div>
+              <button
+                onClick={handleCloseViewQuote}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-400"
+                aria-label="Close view"
+              >
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+
+            {/* Quote Details */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-6">
+                {/* Unit Price */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Unit Price
+                  </label>
+                  <div className="px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-900">
+                    {selectedQuote.unitPrice || 'N/A'}
+                  </div>
+                </div>
+
+                {/* Delivery Date */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Delivery Date
+                  </label>
+                  <div className="px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-900">
+                    {selectedQuote.deliveryDate ? new Date(selectedQuote.deliveryDate).toLocaleDateString() : 'N/A'}
+                  </div>
+                </div>
+
+                {/* Valid Till */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Quote Valid Till
+                  </label>
+                  <div className="px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-900">
+                    {selectedQuote.validTill ? new Date(selectedQuote.validTill).toLocaleDateString() : 'N/A'}
+                  </div>
+                </div>
+
+                {/* Description */}
+                {selectedQuote.description && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Description
+                    </label>
+                    <div className="px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-900 min-h-[100px]">
+                      {selectedQuote.description}
+                    </div>
+                  </div>
+                )}
+
+                {/* Attachment */}
+                {selectedQuote.attachment && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Attachment
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleViewQuoteAttachment}
+                      className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-md text-sm font-medium text-orange-700 bg-white hover:bg-orange-50"
+                    >
+                      View Attachment
+                    </button>
+                  </div>
+                )}
+
+                {/* Status Section */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Vendor Status */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Vendor Status
+                    </label>
+                    <div className="px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        selectedQuote.vendorStatus === 'accepted' ? 'bg-green-100 text-green-800' :
+                        selectedQuote.vendorStatus === 'rejected' ? 'bg-red-100 text-red-800' :
+                        'bg-blue-100 text-blue-800'
+                      }`}>
+                        {selectedQuote.vendorStatus || 'sent'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Buyer Status */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Buyer Status
+                    </label>
+                    <div className="px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        selectedQuote.buyerStatus === 'Accepted' ? 'bg-green-100 text-green-800' :
+                        selectedQuote.buyerStatus === 'Rejected' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {selectedQuote.buyerStatus || 'Pending'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={handleCloseViewQuote}
+                className="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 font-medium transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </>
       )}

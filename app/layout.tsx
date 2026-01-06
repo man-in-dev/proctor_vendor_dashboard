@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AuthLayout from "@/components/AuthLayout";
+import ToastContainer from "@/components/ToastContainer";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,6 +24,7 @@ export default function RootLayout({
       <body className={`${inter.variable} antialiased`}>
         <AuthLayout>
         {children}
+        <ToastContainer />
         </AuthLayout>
       </body>
     </html>

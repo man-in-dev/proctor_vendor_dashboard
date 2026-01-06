@@ -130,6 +130,7 @@ export interface PlatformRating {
   platform: string;
   rating: number;
   count: number;
+  platformLink?: string;
 }
 
 export interface Catalog {
@@ -139,12 +140,22 @@ export interface Catalog {
   pdfFileName?: string;
 }
 
+export interface ClienteleEntry {
+  name: string;
+  industry?: string;
+  website?: string;
+}
+
 export interface VendorProfile {
   _id?: string;
   experience?: number;
   teamSize?: number;
   about?: string;
   website?: string;
+  designation?: string;
+  location?: string;
+  minimumOrderValue?: number;
+  clientele?: ClienteleEntry[];
   platformRatings?: PlatformRating[];
   contactDetails?: ContactDetail[];
   businessAddresses?: BusinessAddress[];
@@ -329,6 +340,109 @@ export async function uploadCatalogPdf(
 }
 
 /**
+ * Generate presigned URL for generic file upload to S3
+ * Calls: POST /api/product-sheet/presigned-url (generic endpoint)
+ */
+export async function generatePresignedUrlForFile(
+  token: string,
+  fileName: string,
+  folder: string = 'vendor-attachments',
+  contentType?: string
+): Promise<{
+  presignedUrl: string;
+  s3Url: string;
+  key: string;
+  fileName: string;
+}> {
+  const response = await fetch(`${API_URL}/api/product-sheet/presigned-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ fileName, folder, contentType }),
+  });
+
+  const responseData: ApiSuccessResponse<{
+    presignedUrl: string;
+    s3Url: string;
+    key: string;
+    fileName: string;
+  }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to generate presigned URL');
+  }
+
+  return (responseData as ApiSuccessResponse<{
+    presignedUrl: string;
+    s3Url: string;
+    key: string;
+    fileName: string;
+  }>).data;
+}
+
+/**
+ * Upload file directly to S3 using presigned URL (generic version)
+ */
+export async function uploadFileToS3(
+  presignedUrl: string,
+  file: File
+): Promise<void> {
+  // Determine content type based on file extension
+  const getContentType = (fileName: string): string => {
+    const ext = fileName.toLowerCase().split('.').pop();
+    const contentTypes: Record<string, string> = {
+      'pdf': 'application/pdf',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls': 'application/vnd.ms-excel',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+    return contentTypes[ext || ''] || 'application/octet-stream';
+  };
+
+  const response = await fetch(presignedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': getContentType(file.name),
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload file to S3: ${response.statusText}`);
+  }
+}
+
+/**
+ * Upload file to S3 (convenience function for generic files)
+ */
+export async function uploadFile(
+  token: string,
+  file: File,
+  folder: string = 'vendor-attachments'
+): Promise<{ url: string; fileName: string; fileSize: number }> {
+  // Step 1: Generate presigned URL
+  const { presignedUrl, s3Url } = await generatePresignedUrlForFile(token, file.name, folder);
+
+  // Step 2: Upload file directly to S3
+  await uploadFileToS3(presignedUrl, file);
+
+  return {
+    url: s3Url,
+    fileName: file.name,
+    fileSize: file.size,
+  };
+}
+
+/**
  * Get signed URL for viewing a catalog PDF
  * Calls: GET /api/vendor/catalog/:catalogIndex/signed-url
  * @param token - JWT authentication token
@@ -397,7 +511,7 @@ export interface RfqRequest {
     email: string;
   };
   deadline: string;
-  vendorStatus: string;
+  status: string;
   createdAt?: string;
 }
 
@@ -427,14 +541,16 @@ export async function getVendorRfqs(token: string): Promise<RfqRequest[]> {
 // Quote Types
 export interface Quote {
   _id?: string;
-  vendorAssignmentId: string;
+  vendorAssignmentId: string | any;
   unitPrice?: string;
   deliveryDate?: string;
   validTill?: string;
   description?: string;
   attachment?: string;
   visibletoClient: boolean;
-  quoteStatus: string;
+  adminStatus: string;
+  buyerStatus: string;
+  vendorStatus: 'sent' | 'accepted' | 'rejected';
   createdAt?: string;
   updatedAt?: string;
 }
@@ -446,7 +562,7 @@ export interface CreateQuotePayload {
   validTill?: string;
   description?: string;
   attachment?: string;
-  quoteStatus?: string;
+  vendorStatus?: 'sent' | 'accepted' | 'rejected';
 }
 
 /**
@@ -471,6 +587,30 @@ export async function createQuote(token: string, payload: CreateQuotePayload): P
   }
 
   return (responseData as ApiSuccessResponse<{ quote: Quote }>).data.quote;
+}
+
+/**
+ * Get a short-lived signed URL for viewing/downloading a file
+ * Calls: POST /api/product-sheet/presigned-download
+ */
+export async function getFileSignedUrl(token: string, fileUrl: string): Promise<string> {
+  const response = await fetch(`${API_URL}/api/product-sheet/presigned-download`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ fileUrl }),
+  });
+
+  const responseData: ApiSuccessResponse<{ signedUrl: string }> | ApiErrorResponse = await response.json();
+
+  if (!response.ok || !responseData.success) {
+    const errorResponse = responseData as ApiErrorResponse;
+    throw new Error(errorResponse.message || errorResponse.error || 'Failed to get signed file URL');
+  }
+
+  return (responseData as ApiSuccessResponse<{ signedUrl: string }>).data.signedUrl;
 }
 
 /**

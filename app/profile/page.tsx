@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { getAuthToken } from '@/lib/storage';
-import { getVendorProfile, updateVendorProfile, uploadCatalogPdf, getCatalogSignedUrl, VendorProfile as VendorProfileType } from '@/lib/api';
+import { getVendorProfile, updateVendorProfile, uploadCatalogPdf, getCatalogSignedUrl, VendorProfile as VendorProfileType, uploadFile, getFileSignedUrl } from '@/lib/api';
+import { showToast } from '@/lib/toast';
 
 interface ContactDetail {
   id: string;
@@ -18,6 +19,7 @@ interface BusinessAddress {
   city: string;
   state: string;
   pincode: string;
+  addressType: 'home' | 'office' | 'other';
 }
 
 interface Catalog {
@@ -39,6 +41,43 @@ interface PlatformRating {
   platform: string;
   rating: number;
   count: number;
+  platformLink?: string;
+}
+
+interface BankAccount {
+  id: string;
+  bankName: string;
+  accountHolderName: string;
+  accountNumber: string;
+  ifscCode: string;
+}
+
+interface ClienteleEntry {
+  id: string;
+  name: string;
+  industry: string;
+  website: string;
+}
+
+interface Brand {
+  id: string;
+  name: string;
+  items: {
+    id: string;
+    name: string;
+    description: string;
+  }[];
+  catalogFileName: string;
+  catalogUrl?: string;
+  file?: File | null;
+}
+
+interface BankAccount {
+  id: string;
+  bankName: string;
+  accountHolderName: string;
+  accountNumber: string;
+  ifscCode: string;
 }
 
 export default function ProfilePage() {
@@ -47,6 +86,8 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState<string | null>(null); // Track which catalog is uploading
   const [viewingPdf, setViewingPdf] = useState<string | null>(null); // Track which catalog is loading signed URL
+  const [uploadingBusinessFile, setUploadingBusinessFile] = useState(false);
+  const [viewingBusinessFile, setViewingBusinessFile] = useState(false);
 
   const [contactDetails, setContactDetails] = useState<ContactDetail[]>([]);
   const [businessAddresses, setBusinessAddresses] = useState<BusinessAddress[]>([]);
@@ -54,15 +95,32 @@ export default function ProfilePage() {
   const [teamSize, setTeamSize] = useState<string>('');
   const [about, setAbout] = useState<string>('');
   const [website, setWebsite] = useState<string>('');
+  const [designation, setDesignation] = useState<string>('');
+  const [location, setLocation] = useState<string>('');
+  const [minimumOrderValue, setMinimumOrderValue] = useState<string>('');
   const [platformRatings, setPlatformRatings] = useState<PlatformRating[]>([]);
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [industries, setIndustries] = useState<Industry[]>([]);
+  const [industryInput, setIndustryInput] = useState<string>('');
+  const [whoAreYou, setWhoAreYou] = useState<string>('');
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [bankDetails, setBankDetails] = useState({
     bankName: '',
     accountHolderName: '',
     accountNumber: '',
     ifscCode: '',
   });
+  const [businessAttachment, setBusinessAttachment] = useState<{
+    file: File | null;
+    fileName: string;
+    fileUrl?: string;
+  }>({
+    file: null,
+    fileName: '',
+    fileUrl: undefined,
+  });
+  const [clientele, setClientele] = useState<ClienteleEntry[]>([]);
 
   // Load profile data on mount
   useEffect(() => {
@@ -87,6 +145,9 @@ export default function ProfilePage() {
         setTeamSize(profile.teamSize?.toString() || '');
         setAbout(profile.about || '');
         setWebsite(profile.website || '');
+        setDesignation((profile as any).designation || '');
+        setLocation((profile as any).location || '');
+        setMinimumOrderValue((profile as any).minimumOrderValue?.toString() || '');
         
         // Convert backend format to frontend format (with ids)
         setPlatformRatings(
@@ -95,6 +156,7 @@ export default function ProfilePage() {
             platform: rating.platform,
             rating: rating.rating,
             count: rating.count,
+            platformLink: (rating as any).platformLink || '',
           }))
         );
         
@@ -115,8 +177,21 @@ export default function ProfilePage() {
             city: address.city,
             state: address.state,
             pincode: address.pincode,
+            addressType: (address as any).addressType || 'office',
           }))
         );
+
+        const rawClientele = (profile as any).clientele as any[] | undefined;
+        if (rawClientele && Array.isArray(rawClientele)) {
+          setClientele(
+            rawClientele.map((c, index) => ({
+              id: (index + 1).toString(),
+              name: c.name || '',
+              industry: c.industry || '',
+              website: c.website || '',
+            })),
+          );
+        }
         
         setCatalogs(
           (profile.catalogs || []).map((catalog, index) => ({
@@ -135,6 +210,31 @@ export default function ProfilePage() {
             name: industry,
           }))
         );
+
+        const who = (profile as any).whoAreYou;
+        if (who) {
+          setWhoAreYou(who);
+        }
+
+        const rawBrands = (profile as any).brands as any[] | undefined;
+        if (rawBrands && Array.isArray(rawBrands)) {
+          setBrands(
+            rawBrands.map((b, bIndex) => ({
+              id: (bIndex + 1).toString(),
+              name: b.name || '',
+              items: (b.items || []).map((it: any, iIndex: number) => ({
+                id: `${bIndex + 1}-${iIndex + 1}`,
+                name: it.name || '',
+                description: it.description || '',
+              })),
+              catalogFileName: b.catalogFileName || '',
+              catalogUrl: b.catalogUrl,
+              file: null,
+            })),
+          );
+        } else {
+          setBrands([]);
+        }
         
         if (profile.bankDetails) {
           setBankDetails({
@@ -142,6 +242,42 @@ export default function ProfilePage() {
             accountHolderName: profile.bankDetails.accountHolderName || '',
             accountNumber: profile.bankDetails.accountNumber || '',
             ifscCode: profile.bankDetails.ifscCode || '',
+          });
+        }
+
+        const rawBankAccounts = (profile as any).bankAccounts as any[] | undefined;
+        if (rawBankAccounts && Array.isArray(rawBankAccounts) && rawBankAccounts.length > 0) {
+          setBankAccounts(
+            rawBankAccounts.map((b, index) => ({
+              id: (index + 1).toString(),
+              bankName: b.bankName || '',
+              accountHolderName: b.accountHolderName || '',
+              accountNumber: b.accountNumber || '',
+              ifscCode: b.ifscCode || '',
+            })),
+          );
+        } else if (profile.bankDetails) {
+          setBankAccounts([
+            {
+              id: '1',
+              bankName: profile.bankDetails.bankName || '',
+              accountHolderName: profile.bankDetails.accountHolderName || '',
+              accountNumber: profile.bankDetails.accountNumber || '',
+              ifscCode: profile.bankDetails.ifscCode || '',
+            },
+          ]);
+        } else {
+          setBankAccounts([]);
+        }
+
+        // Load business attachment if exists (stored as custom fields)
+        const businessAttachmentUrl = (profile as any).businessAttachmentUrl;
+        const businessAttachmentFileName = (profile as any).businessAttachmentFileName;
+        if (businessAttachmentUrl || businessAttachmentFileName) {
+          setBusinessAttachment({
+            file: null,
+            fileName: businessAttachmentFileName || '',
+            fileUrl: businessAttachmentUrl,
           });
         }
       }
@@ -164,15 +300,21 @@ export default function ProfilePage() {
       }
 
       // Convert frontend format (with ids) to backend format (without ids)
+      const primaryBank = bankAccounts[0] || bankDetails;
+
       const profileData: Partial<VendorProfileType> = {
         experience: experience ? parseInt(experience) : undefined,
         teamSize: teamSize ? parseInt(teamSize) : undefined,
         about: about || undefined,
         website: website || undefined,
+        designation: designation || undefined,
+        location: location || undefined,
+        minimumOrderValue: minimumOrderValue ? parseFloat(minimumOrderValue) : undefined,
         platformRatings: platformRatings.map(rating => ({
           platform: rating.platform,
           rating: rating.rating,
           count: rating.count,
+          platformLink: rating.platformLink || undefined,
         })),
         contactDetails: contactDetails.map(contact => ({
           contactPerson: contact.contactPerson,
@@ -185,6 +327,7 @@ export default function ProfilePage() {
           city: address.city,
           state: address.state,
           pincode: address.pincode,
+          addressType: address.addressType || 'office',
         })),
         catalogs: catalogs.map(catalog => ({
           name: catalog.name,
@@ -194,18 +337,51 @@ export default function ProfilePage() {
         })),
         industries: industries.map(industry => industry.name),
         bankDetails: {
-          bankName: bankDetails.bankName || undefined,
-          accountHolderName: bankDetails.accountHolderName || undefined,
-          accountNumber: bankDetails.accountNumber || undefined,
-          ifscCode: bankDetails.ifscCode || undefined,
+          bankName: primaryBank.bankName || undefined,
+          accountHolderName: primaryBank.accountHolderName || undefined,
+          accountNumber: primaryBank.accountNumber || undefined,
+          ifscCode: primaryBank.ifscCode || undefined,
         },
-      };
+        // Store business attachment and custom fields
+        businessAttachmentUrl: businessAttachment.fileUrl || undefined,
+        businessAttachmentFileName: businessAttachment.fileName || undefined,
+        whoAreYou: whoAreYou || undefined,
+        brands:
+          brands.length > 0
+            ? brands.map((b) => ({
+                name: b.name,
+                items: b.items.map((it) => ({
+                  name: it.name,
+                  description: it.description,
+                })),
+                catalogFileName: b.catalogFileName,
+                catalogUrl: b.catalogUrl,
+              }))
+            : undefined,
+        bankAccounts:
+          bankAccounts.length > 0
+            ? bankAccounts.map((b) => ({
+                bankName: b.bankName || undefined,
+                accountHolderName: b.accountHolderName || undefined,
+                accountNumber: b.accountNumber || undefined,
+                ifscCode: b.ifscCode || undefined,
+              }))
+            : undefined,
+        clientele:
+          clientele.length > 0
+            ? clientele.map((c) => ({
+                name: c.name,
+                industry: c.industry || undefined,
+                website: c.website || undefined,
+              }))
+            : undefined,
+      } as any;
 
       await updateVendorProfile(token, profileData);
       
       // Show success message
       setError(null);
-      alert('Profile saved successfully!');
+      showToast({ type: 'success', message: 'Profile saved successfully!' });
     } catch (err: any) {
       console.error('Error saving profile:', err);
       setError(err.message || 'Failed to save profile');
@@ -244,6 +420,7 @@ export default function ProfilePage() {
       city: '',
       state: '',
       pincode: '',
+      addressType: 'office',
     };
     setBusinessAddresses([...businessAddresses, newAddress]);
   };
@@ -293,18 +470,18 @@ export default function ProfilePage() {
 
     try {
       if (file.type !== 'application/pdf') {
-        alert('Please upload a PDF file only');
+        showToast({ type: 'error', message: 'Please upload a PDF file only' });
         return;
       }
       if (file.size > 10 * 1024 * 1024) { // 10MB limit
-        alert('File size should be less than 10MB');
+        showToast({ type: 'error', message: 'File size should be less than 10MB' });
         return;
       }
 
       setUploadingPdf(id);
       const token = getAuthToken();
       if (!token) {
-        alert('Not authenticated');
+        showToast({ type: 'error', message: 'Not authenticated' });
         setUploadingPdf(null);
         return;
       }
@@ -326,7 +503,7 @@ export default function ProfilePage() {
       updateCatalog(id, 'pdfUrl', result.url);
     } catch (err: any) {
       console.error('Error uploading PDF:', err);
-      alert(err.message || 'Failed to upload PDF');
+      showToast({ type: 'error', message: err.message || 'Failed to upload PDF' });
     } finally {
       setUploadingPdf(null);
     }
@@ -355,31 +532,68 @@ export default function ProfilePage() {
     } catch (err: any) {
       console.error('Error getting signed URL:', err);
       setError(err.message || 'Failed to open PDF');
-      alert(err.message || 'Failed to open PDF. Please try again.');
+      showToast({ type: 'error', message: err.message || 'Failed to open PDF. Please try again.' });
     } finally {
       setViewingPdf(null);
     }
   };
 
-  // Industry management
+  // Industry management (single input -> multiple badges)
   const addIndustry = () => {
-    const newIndustry: Industry = {
+    const raw = industryInput
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+
+    if (raw.length === 0) return;
+
+    const timestamp = Date.now();
+    const newIndustries: Industry[] = raw.map((name, index) => ({
+      id: (timestamp + index).toString(),
+      name,
+    }));
+
+    setIndustries([...industries, ...newIndustries]);
+    setIndustryInput('');
+  };
+
+  // Multiple bank accounts management
+  const addBankAccount = () => {
+    const newAccount: BankAccount = {
       id: Date.now().toString(),
-      name: '',
+      bankName: '',
+      accountHolderName: '',
+      accountNumber: '',
+      ifscCode: '',
     };
-    setIndustries([...industries, newIndustry]);
+    setBankAccounts([...bankAccounts, newAccount]);
+  };
+
+  const removeBankAccount = (id: string) => {
+    setBankAccounts(bankAccounts.filter((acc) => acc.id !== id));
+  };
+
+  const updateBankAccount = (
+    id: string,
+    field: keyof Omit<BankAccount, 'id'>,
+    value: string,
+  ) => {
+    setBankAccounts(
+      bankAccounts.map((acc) =>
+        acc.id === id ? { ...acc, [field]: value } : acc,
+      ),
+    );
   };
 
   const removeIndustry = (id: string) => {
-    if (industries.length > 1) {
-      setIndustries(industries.filter(industry => industry.id !== id));
-    }
+    setIndustries(industries.filter((industry) => industry.id !== id));
   };
 
-  const updateIndustry = (id: string, field: keyof Industry, value: string) => {
-    setIndustries(industries.map(industry =>
-      industry.id === id ? { ...industry, [field]: value } : industry
-    ));
+  const handleIndustryKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addIndustry();
+    }
   };
 
   // Platform Rating management
@@ -403,6 +617,235 @@ export default function ProfilePage() {
     setPlatformRatings(platformRatings.map(rating =>
       rating.id === id ? { ...rating, [field]: value } : rating
     ));
+  };
+
+  // Clientele management
+  const addClient = () => {
+    const newClient: ClienteleEntry = {
+      id: Date.now().toString(),
+      name: '',
+      industry: '',
+      website: '',
+    };
+    setClientele([...clientele, newClient]);
+  };
+
+  const removeClient = (id: string) => {
+    setClientele(clientele.filter((c) => c.id !== id));
+  };
+
+  const updateClient = (id: string, field: keyof Omit<ClienteleEntry, 'id'>, value: string) => {
+    setClientele(
+      clientele.map((c) => (c.id === id ? { ...c, [field]: value } : c)),
+    );
+  };
+
+  // Supplier brands & items
+  const addBrand = () => {
+    const newBrand: Brand = {
+      id: Date.now().toString(),
+      name: '',
+      items: [],
+      catalogFileName: '',
+      catalogUrl: undefined,
+      file: null,
+    };
+    setBrands([...brands, newBrand]);
+  };
+
+  const removeBrand = (id: string) => {
+    setBrands(brands.filter((b) => b.id !== id));
+  };
+
+  const updateBrand = (id: string, field: keyof Brand, value: string) => {
+    setBrands(
+      brands.map((b) => (b.id === id ? { ...b, [field]: value } : b)),
+    );
+  };
+
+  const addBrandItem = (brandId: string) => {
+    setBrands((prev) =>
+      prev.map((b) =>
+        b.id === brandId
+          ? {
+              ...b,
+              items: [
+                ...b.items,
+                {
+                  id: Date.now().toString(),
+                  name: '',
+                  description: '',
+                  catalogFileName: '',
+                  catalogUrl: undefined,
+                  file: null,
+                },
+              ],
+            }
+          : b,
+      ),
+    );
+  };
+
+  const removeBrandItem = (brandId: string, itemId: string) => {
+    setBrands((prev) =>
+      prev.map((b) =>
+        b.id === brandId
+          ? {
+              ...b,
+              items: b.items.filter((it) => it.id !== itemId),
+            }
+          : b,
+      ),
+    );
+  };
+
+  const updateBrandItem = (
+    brandId: string,
+    itemId: string,
+    field: 'name' | 'description',
+    value: any,
+  ) => {
+    setBrands((prev) =>
+      prev.map((b) =>
+        b.id === brandId
+          ? {
+              ...b,
+              items: b.items.map((it) =>
+                it.id === itemId ? { ...it, [field]: value } : it,
+              ),
+            }
+          : b,
+      ),
+    );
+  };
+
+  // Business attachment handlers
+  const handleBusinessFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      if (file.size > 10 * 1024 * 1024) { // 10MB limit
+        showToast({ type: 'error', message: 'File size should be less than 10MB' });
+        return;
+      }
+
+      setUploadingBusinessFile(true);
+      const token = getAuthToken();
+      if (!token) {
+        showToast({ type: 'error', message: 'Not authenticated' });
+        setUploadingBusinessFile(false);
+        return;
+      }
+
+      // Upload to S3
+      const result = await uploadFile(token, file, 'vendor-business-attachments');
+
+      // Update state
+      setBusinessAttachment({
+        file: file,
+        fileName: result.fileName,
+        fileUrl: result.url,
+      });
+
+      showToast({ type: 'success', message: 'File uploaded successfully!' });
+    } catch (err: any) {
+      console.error('Error uploading business file:', err);
+      showToast({ type: 'error', message: err.message || 'Failed to upload file' });
+    } finally {
+      setUploadingBusinessFile(false);
+    }
+  };
+
+  const handleViewBusinessFile = async () => {
+    if (!businessAttachment.fileUrl) return;
+
+    try {
+      setViewingBusinessFile(true);
+      const token = getAuthToken();
+      if (!token) {
+        showToast({ type: 'error', message: 'Not authenticated' });
+        return;
+      }
+
+      // Get signed URL for viewing
+      const signedUrl = await getFileSignedUrl(token, businessAttachment.fileUrl);
+      
+      // Open file in new tab
+      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      console.error('Error getting signed URL:', err);
+      showToast({ type: 'error', message: err.message || 'Failed to open file. Please try again.' });
+    } finally {
+      setViewingBusinessFile(false);
+    }
+  };
+
+  const removeBusinessFile = () => {
+    setBusinessAttachment({
+      file: null,
+      fileName: '',
+      fileUrl: undefined,
+    });
+  };
+
+  const handleBrandCatalogUpload = async (
+    brandId: string,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      if (file.type !== 'application/pdf') {
+        showToast({ type: 'error', message: 'Please upload a PDF file only' });
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        showToast({ type: 'error', message: 'File size should be less than 10MB' });
+        return;
+      }
+
+      const token = getAuthToken();
+      if (!token) {
+        showToast({ type: 'error', message: 'Not authenticated' });
+        return;
+      }
+
+      const result = await uploadFile(token, file, 'vendor-brand-catalogs');
+
+      setBrands((prev) =>
+        prev.map((b) =>
+          b.id === brandId
+            ? { ...b, file, catalogFileName: result.fileName, catalogUrl: result.url }
+            : b,
+        ),
+      );
+
+      showToast({ type: 'success', message: 'Catalog uploaded successfully!' });
+    } catch (err: any) {
+      console.error('Error uploading brand catalog:', err);
+      showToast({ type: 'error', message: err.message || 'Failed to upload catalog' });
+    }
+  };
+
+  const handleViewBrandCatalog = async (brandId: string) => {
+    const brand = brands.find((b) => b.id === brandId);
+    if (!brand?.catalogUrl) return;
+
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        showToast({ type: 'error', message: 'Not authenticated' });
+        return;
+      }
+
+      const signedUrl = await getFileSignedUrl(token, brand.catalogUrl);
+      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      console.error('Error getting brand item catalog URL:', err);
+      showToast({ type: 'error', message: err.message || 'Failed to open catalog. Please try again.' });
+    }
   };
 
   return (
@@ -487,7 +930,20 @@ export default function ProfilePage() {
               />
             </div>
 
-            <div className="md:col-span-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Designation
+              </label>
+              <input
+                type="text"
+                value={designation}
+                onChange={(e) => setDesignation(e.target.value)}
+                placeholder="e.g., Procurement Manager, Owner, Director"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Website
               </label>
@@ -496,6 +952,34 @@ export default function ProfilePage() {
                 value={website}
                 onChange={(e) => setWebsite(e.target.value)}
                 placeholder="https://www.example.com"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Location
+              </label>
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="e.g., Mumbai, India"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Minimum Order Value
+              </label>
+              <input
+                type="number"
+                value={minimumOrderValue}
+                onChange={(e) => setMinimumOrderValue(e.target.value)}
+                placeholder="e.g., 10000"
+                min="0"
+                step="0.01"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
@@ -564,7 +1048,7 @@ export default function ProfilePage() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Platform Name
@@ -622,6 +1106,19 @@ export default function ProfilePage() {
                       onChange={(e) => updatePlatformRating(platformRating.id, 'count', parseInt(e.target.value) || 0)}
                       placeholder="127"
                       min="0"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2 md:col-span-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Platform Link
+                    </label>
+                    <input
+                      type="url"
+                      value={platformRating.platformLink || ''}
+                      onChange={(e) => updatePlatformRating(platformRating.id, 'platformLink', e.target.value)}
+                      placeholder="https://www.google.com/maps/place/your-business"
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     />
                   </div>
@@ -690,6 +1187,84 @@ export default function ProfilePage() {
                 defaultValue="AAAAA0000A"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Business Documents
+              </label>
+              {uploadingBusinessFile ? (
+                <div className="p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
+                  <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-sm text-gray-600">Uploading file...</p>
+                  </div>
+                </div>
+              ) : !businessAttachment.file && !businessAttachment.fileUrl ? (
+                <div>
+                  <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                      <svg className="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                      </svg>
+                      <p className="mb-2 text-sm text-gray-500">
+                        <span className="font-semibold">Click to upload</span> or drag and drop
+                      </p>
+                      <p className="text-xs text-gray-500">Any file type (MAX. 10MB)</p>
+                    </div>
+                    <input
+                      type="file"
+                      onChange={handleBusinessFileUpload}
+                      className="hidden"
+                      disabled={uploadingBusinessFile}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0">
+                      <svg className="w-8 h-8 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {businessAttachment.fileName}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        {businessAttachment.file && (
+                          <p className="text-xs text-gray-500">
+                            {(businessAttachment.file.size / (1024 * 1024)).toFixed(2)} MB
+                          </p>
+                        )}
+                        {businessAttachment.fileUrl && (
+                          <button
+                            type="button"
+                            onClick={handleViewBusinessFile}
+                            disabled={viewingBusinessFile}
+                            className="text-xs text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {viewingBusinessFile ? 'Opening...' : 'View File'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={removeBusinessFile}
+                    className="ml-4 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Remove file"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -833,11 +1408,27 @@ export default function ProfilePage() {
                   </button>
                 )}
                 
-                {businessAddresses.length > 1 && (
-                  <div className="mb-4">
-                    <span className="text-sm font-medium text-gray-700">Address {index + 1}</span>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-gray-700">
+                    Address {index + 1}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {(['home', 'office', 'other'] as const).map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => updateBusinessAddress(address.id, 'addressType', type)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                          address.addressType === type
+                            ? 'bg-purple-100 text-purple-700 border-purple-300'
+                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {type === 'home' ? 'Home' : type === 'office' ? 'Office' : 'Other'}
+                      </button>
+                    ))}
                   </div>
-                )}
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
@@ -979,50 +1570,379 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Industries Section */}
+        {/* Additional Bank Accounts (multiple) */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                  <polyline points="9 22 9 12 15 12 15 22"></polyline>
+              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 4h18v16H3z"></path>
+                  <path d="M3 10h18"></path>
                 </svg>
               </div>
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">Industries</h2>
-                <p className="text-sm text-gray-500">Industries you serve.</p>
+                <h2 className="text-xl font-semibold text-gray-900">Additional Bank Accounts</h2>
+                <p className="text-sm text-gray-500">Add multiple bank accounts for payouts.</p>
               </div>
             </div>
             <button
-              onClick={addIndustry}
+              type="button"
+              onClick={addBankAccount}
               className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
               </svg>
-              Add Industry
+              Add Account
             </button>
           </div>
 
+          {bankAccounts.length === 0 && (
+            <p className="text-sm text-gray-500 mb-3">
+              No additional bank accounts added yet. Click &quot;Add Account&quot; to create one.
+            </p>
+          )}
+
           <div className="space-y-4">
-            {industries.map((industry, index) => (
-              <div key={industry.id} className="flex items-center gap-4">
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    value={industry.name}
-                    onChange={(e) => updateIndustry(industry.id, 'name', e.target.value)}
-                    placeholder={`Industry ${index + 1} (e.g., Manufacturing, Healthcare, etc.)`}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                </div>
-                {industries.length > 1 && (
+            {bankAccounts.map((account, index) => (
+              <div key={account.id} className="border border-gray-200 rounded-lg p-4 relative">
+                {bankAccounts.length > 1 && (
                   <button
-                    onClick={() => removeIndustry(industry.id)}
+                    type="button"
+                    onClick={() => removeBankAccount(account.id)}
+                    className="absolute top-3 right-3 p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Remove account"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                  </button>
+                )}
+
+                <div className="mb-3">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-800 border border-yellow-200">
+                    Account {index + 1}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Bank Name
+                    </label>
+                    <input
+                      type="text"
+                      value={account.bankName}
+                      onChange={(e) => updateBankAccount(account.id, 'bankName', e.target.value)}
+                      placeholder="e.g., HDFC Bank"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Account Holder Name
+                    </label>
+                    <input
+                      type="text"
+                      value={account.accountHolderName}
+                      onChange={(e) => updateBankAccount(account.id, 'accountHolderName', e.target.value)}
+                      placeholder="e.g., Premium Supplies Co. Pvt Ltd"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Account Number
+                    </label>
+                    <input
+                      type="text"
+                      value={account.accountNumber}
+                      onChange={(e) => updateBankAccount(account.id, 'accountNumber', e.target.value)}
+                      placeholder="Enter full account number"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      IFSC Code
+                    </label>
+                    <input
+                      type="text"
+                      value={account.ifscCode}
+                      onChange={(e) => updateBankAccount(account.id, 'ifscCode', e.target.value)}
+                      placeholder="e.g., HDFC0001234"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent uppercase"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Clientele Section */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="10" cy="7" r="4"></circle>
+                  <path d="M21 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Clientele</h2>
+                <p className="text-sm text-gray-500">Key clients and brands you work with.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={addClient}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Client
+            </button>
+          </div>
+
+          {clientele.length === 0 && (
+            <p className="text-sm text-gray-500 mb-3">
+              No clients added yet. Use &quot;Add Client&quot; to list your major customers.
+            </p>
+          )}
+
+          <div className="space-y-4">
+            {clientele.map((client, index) => (
+              <div key={client.id} className="border border-gray-200 rounded-lg p-4 relative">
+                {clientele.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeClient(client.id)}
+                    className="absolute top-3 right-3 p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Remove client"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                  </button>
+                )}
+
+                <div className="mb-3">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-800 border border-indigo-200">
+                    Client {index + 1}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Client / Brand Name
+                    </label>
+                    <input
+                      type="text"
+                      value={client.name}
+                      onChange={(e) => updateClient(client.id, 'name', e.target.value)}
+                      placeholder="e.g., ABC Industries Ltd."
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Industry
+                    </label>
+                    <input
+                      type="text"
+                      value={client.industry}
+                      onChange={(e) => updateClient(client.id, 'industry', e.target.value)}
+                      placeholder="e.g., Manufacturing, Retail"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Website / Profile Link
+                    </label>
+                    <input
+                      type="url"
+                      value={client.website}
+                      onChange={(e) => updateClient(client.id, 'website', e.target.value)}
+                      placeholder="https://client-website.com"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Industries Section */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                <polyline points="9 22 9 12 15 12 15 22"></polyline>
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Industries</h2>
+              <p className="text-sm text-gray-500">Industries you serve.</p>
+            </div>
+          </div>
+
+          {/* Existing industries as badges */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            {industries.length === 0 && (
+              <p className="text-xs text-gray-500">No industries added yet. Add a few using the input below.</p>
+            )}
+            {industries.map((industry) => (
+              <span
+                key={industry.id}
+                className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-pink-50 text-pink-700 text-xs border border-pink-200"
+              >
+                <span>{industry.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeIndustry(industry.id)}
+                  className="ml-1 text-pink-500 hover:text-pink-700"
+                  aria-label="Remove industry"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+
+          {/* Input to add multiple industries via Enter/comma */}
+          <div className="flex items-center gap-3">
+            <input
+              type="text"
+              value={industryInput}
+              onChange={(e) => setIndustryInput(e.target.value)}
+              onKeyDown={handleIndustryKeyDown}
+              placeholder="Type industry and press Enter or comma (e.g., Manufacturing, Healthcare)"
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+            />
+            <button
+              type="button"
+              onClick={addIndustry}
+              className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+      {/* Who Are You Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M12 8v8m-4-4h8"></path>
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Who are you?</h2>
+            <p className="text-sm text-gray-500">Tell us if you are a supplier or manufacturer.</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-4">
+          <button
+            type="button"
+            onClick={() => setWhoAreYou('supplier')}
+            className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+              whoAreYou === 'supplier'
+                ? 'border-orange-500 bg-orange-50 text-orange-600'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Supplier
+          </button>
+          <button
+            type="button"
+            onClick={() => setWhoAreYou('manufacturer')}
+            className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+              whoAreYou === 'manufacturer'
+                ? 'border-orange-500 bg-orange-50 text-orange-600'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Manufacturer
+          </button>
+        </div>
+      </div>
+
+      {/* Brands & Items Section (only for suppliers) */}
+      {whoAreYou === 'supplier' && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 7h18M3 12h18M3 17h18"></path>
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Brands & Items</h2>
+                <p className="text-sm text-gray-500">Add brands and items with catalogs you supply.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={addBrand}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Brand
+            </button>
+          </div>
+
+          {brands.length === 0 && (
+            <p className="text-sm text-gray-500">No brands added yet. Click &quot;Add Brand&quot; to get started.</p>
+          )}
+
+          <div className="space-y-6 mt-4">
+            {brands.map((brand) => (
+              <div key={brand.id} className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Brand Name
+                    </label>
+                    <input
+                      type="text"
+                      value={brand.name}
+                      onChange={(e) => updateBrand(brand.id, 'name', e.target.value)}
+                      placeholder="e.g., BrandX"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeBrand(brand.id)}
                     className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Remove industry"
+                    title="Remove brand"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <circle cx="12" cy="12" r="10"></circle>
@@ -1030,13 +1950,152 @@ export default function ProfilePage() {
                       <line x1="9" y1="9" x2="15" y2="15"></line>
                     </svg>
                   </button>
+                </div>
+
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-medium text-gray-800">Items under this brand</h3>
+                  <button
+                    type="button"
+                    onClick={() => addBrandItem(brand.id)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-900 text-white rounded-full text-xs hover:bg-black transition-colors"
+                  >
+                    <span>+ Add Item</span>
+                  </button>
+                </div>
+
+                {brand.items.length === 0 && (
+                  <p className="text-xs text-gray-500 mb-2">No items added yet for this brand.</p>
                 )}
+
+                <div className="space-y-4 mt-2">
+                  {brand.items.map((item) => (
+                    <div key={item.id} className="border border-gray-200 rounded-lg p-3">
+                      <div className="flex items-start justify-between gap-4 mb-3">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Item Name
+                          </label>
+                          <input
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => updateBrandItem(brand.id, item.id, 'name', e.target.value)}
+                            placeholder="e.g., Industrial Pump Model A"
+                            className="w-full px-3 py-1.5 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeBrandItem(brand.id, item.id)}
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Remove item"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div className="mb-3">
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Description
+                        </label>
+                        <textarea
+                          value={item.description}
+                          onChange={(e) => updateBrandItem(brand.id, item.id, 'description', e.target.value)}
+                          placeholder="Short description of this item..."
+                          rows={2}
+                          className="w-full px-3 py-1.5 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm resize-none"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Brand Catalog (PDF)
+                  </label>
+                  {!brand.catalogUrl ? (
+                    <div className="mt-1">
+                      <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                        <div className="flex flex-col items-center justify-center pt-3 pb-4">
+                          <svg className="w-8 h-8 mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                          </svg>
+                          <p className="mb-1 text-xs text-gray-500">
+                            <span className="font-semibold">Click to upload</span> or drag and drop
+                          </p>
+                          <p className="text-[11px] text-gray-500">PDF only (MAX. 10MB)</p>
+                        </div>
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          onChange={(e) => handleBrandCatalogUpload(brand.id, e)}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="mt-1 p-3 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-shrink-0">
+                          <svg className="w-7 h-7 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-900 truncate">
+                            {brand.catalogFileName}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {brand.file && (
+                              <p className="text-[11px] text-gray-500">
+                                {(brand.file.size / (1024 * 1024)).toFixed(2)} MB
+                              </p>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleViewBrandCatalog(brand.id)}
+                              className="text-[11px] text-orange-500 hover:text-orange-600 underline"
+                            >
+                              View Catalog
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBrands((prev) =>
+                            prev.map((b) =>
+                              b.id === brand.id
+                                ? { ...b, file: null, catalogFileName: '', catalogUrl: undefined }
+                                : b,
+                            ),
+                          );
+                        }}
+                        className="ml-3 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Remove catalog"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <line x1="15" y1="9" x2="9" y2="15"></line>
+                          <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </div>
+      )}
 
-        {/* Catalogs Section */}
+      {/* Catalogs Section (only for manufacturers) */}
+      {whoAreYou === 'manufacturer' && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -1203,6 +2262,7 @@ export default function ProfilePage() {
             ))}
           </div>
         </div>
+      )}
       </div>
     </div>
   );
