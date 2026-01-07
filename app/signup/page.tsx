@@ -11,19 +11,25 @@ export default function SignupPage() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     password: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showPhoneModal, setShowPhoneModal] = useState(false);
+  const [googlePhone, setGooglePhone] = useState('');
+  const [googlePhoneError, setGooglePhoneError] = useState<string | null>(null);
 
-  const handleGoogleSignIn = async () => {
+  const startGoogleOAuth = async (phone: string) => {
     try {
       setGoogleLoading(true);
       setError(null);
-      const authUrl = await getGoogleAuthUrl('/auth/google/success');
+      setGooglePhoneError(null);
+
+      const redirectPath = `/auth/google/success?phone=${encodeURIComponent(phone)}`;
+      const authUrl = await getGoogleAuthUrl(redirectPath);
       if (authUrl) {
-        // Redirect to Google OAuth
         window.location.href = authUrl;
       } else {
         setError('Failed to initiate Google Sign-In');
@@ -33,6 +39,11 @@ export default function SignupPage() {
       setError(err.message || 'Failed to initiate Google Sign-In');
       setGoogleLoading(false);
     }
+  };
+
+  const handleGoogleSignIn = () => {
+    setGooglePhoneError(null);
+    setShowPhoneModal(true);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,6 +64,8 @@ export default function SignupPage() {
         email: formData.email,
         password: formData.password,
         name: formData.name,
+        phone: formData.phone,
+        role: 'vendor',
       });
       
       // Save token
@@ -72,6 +85,7 @@ export default function SignupPage() {
   };
 
   return (
+    <>
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-2xl">
         {/* Logo */}
@@ -114,6 +128,21 @@ export default function SignupPage() {
                 onChange={handleChange}
                 placeholder="vendor@example.com"
                 required
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
+                Phone Number
+              </label>
+              <input
+                id="phone"
+                name="phone"
+                type="tel"
+                value={formData.phone}
+                onChange={handleChange}
+                placeholder="e.g., +91 98765 43210"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
@@ -217,6 +246,73 @@ export default function SignupPage() {
         </div>
       </div>
     </div>
+
+    {/* Phone capture modal for Google OAuth */}
+    {showPhoneModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="w-full max-w-sm bg-white rounded-lg shadow-lg border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Add your phone number</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Please add your phone number to continue with Google sign up.
+          </p>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const trimmed = googlePhone.trim();
+              if (!trimmed) {
+                setGooglePhoneError('Please enter your phone number');
+                return;
+              }
+              startGoogleOAuth(trimmed);
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label htmlFor="google-phone" className="block text-sm font-medium text-gray-700 mb-1">
+                Phone Number
+              </label>
+              <input
+                id="google-phone"
+                type="tel"
+                value={googlePhone}
+                onChange={(e) => {
+                  setGooglePhone(e.target.value);
+                  setGooglePhoneError(null);
+                }}
+                placeholder="e.g., +91 98765 43210"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+              {googlePhoneError && (
+                <p className="mt-1 text-xs text-red-600">{googlePhoneError}</p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPhoneModal(false);
+                  setGooglePhone('');
+                  setGooglePhoneError(null);
+                }}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={googleLoading}
+                className="px-4 py-1.5 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {googleLoading ? 'Continuing...' : 'Continue with Google'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

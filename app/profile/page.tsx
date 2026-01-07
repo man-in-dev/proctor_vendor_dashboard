@@ -20,7 +20,8 @@ interface BusinessAddress {
   city: string;
   state: string;
   pincode: string;
-  addressType: 'home' | 'office' | 'other';
+  addressType: 'office' | 'warehouse' | 'factory' | 'store' | 'others';
+  customAddressLabel?: string;
 }
 
 interface Catalog {
@@ -60,6 +61,15 @@ interface ClienteleEntry {
   website: string;
 }
 
+interface BusinessDocument {
+  id: string;
+  documentType: string;
+  documentNumber: string;
+  file: File | null;
+  fileName: string;
+  fileUrl?: string;
+}
+
 interface Brand {
   id: string;
   name: string;
@@ -87,8 +97,6 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState<string | null>(null); // Track which catalog is uploading
   const [viewingPdf, setViewingPdf] = useState<string | null>(null); // Track which catalog is loading signed URL
-  const [uploadingBusinessFile, setUploadingBusinessFile] = useState(false);
-  const [viewingBusinessFile, setViewingBusinessFile] = useState(false);
 
   const [contactDetails, setContactDetails] = useState<ContactDetail[]>([]);
   const [businessAddresses, setBusinessAddresses] = useState<BusinessAddress[]>([]);
@@ -111,15 +119,9 @@ export default function ProfilePage() {
     accountNumber: '',
     ifscCode: '',
   });
-  const [businessAttachment, setBusinessAttachment] = useState<{
-    file: File | null;
-    fileName: string;
-    fileUrl?: string;
-  }>({
-    file: null,
-    fileName: '',
-    fileUrl: undefined,
-  });
+  const [businessDocuments, setBusinessDocuments] = useState<BusinessDocument[]>([]);
+  const [uploadingDocument, setUploadingDocument] = useState<string | null>(null);
+  const [viewingDocument, setViewingDocument] = useState<string | null>(null);
   const [clientele, setClientele] = useState<ClienteleEntry[]>([]);
   const [supplierCatalog, setSupplierCatalog] = useState<SupplierCatalog>({
     file: null,
@@ -203,6 +205,7 @@ export default function ProfilePage() {
             state: address.state,
             pincode: address.pincode,
             addressType: (address as any).addressType || 'office',
+            customAddressLabel: (address as any).customAddressLabel || '',
           }))
         );
 
@@ -311,15 +314,21 @@ export default function ProfilePage() {
           setBankAccounts([]);
         }
 
-        // Load business attachment if exists (stored as custom fields)
-        const businessAttachmentUrl = (profile as any).businessAttachmentUrl;
-        const businessAttachmentFileName = (profile as any).businessAttachmentFileName;
-        if (businessAttachmentUrl || businessAttachmentFileName) {
-          setBusinessAttachment({
-            file: null,
-            fileName: businessAttachmentFileName || '',
-            fileUrl: businessAttachmentUrl,
-          });
+        // Load business documents if exists
+        const businessDocumentsData = (profile as any).businessDocuments as any[] | undefined;
+        if (businessDocumentsData && Array.isArray(businessDocumentsData)) {
+          setBusinessDocuments(
+            businessDocumentsData.map((doc, index) => ({
+              id: (index + 1).toString(),
+              documentType: doc.documentType || '',
+              documentNumber: doc.documentNumber || '',
+              file: null,
+              fileName: doc.fileName || '',
+              fileUrl: doc.fileUrl,
+            }))
+          );
+        } else {
+          setBusinessDocuments([]);
         }
       }
     } catch (err: any) {
@@ -369,6 +378,7 @@ export default function ProfilePage() {
           state: address.state,
           pincode: address.pincode,
           addressType: address.addressType || 'office',
+          customAddressLabel: address.addressType === 'others' ? (address.customAddressLabel || undefined) : undefined,
         })),
         catalogs: catalogs.map(catalog => ({
           name: catalog.name,
@@ -383,9 +393,16 @@ export default function ProfilePage() {
           accountNumber: primaryBank.accountNumber || undefined,
           ifscCode: primaryBank.ifscCode || undefined,
         },
-        // Store business attachment and custom fields
-        businessAttachmentUrl: businessAttachment.fileUrl || undefined,
-        businessAttachmentFileName: businessAttachment.fileName || undefined,
+        // Store business documents
+        businessDocuments:
+          businessDocuments.length > 0
+            ? businessDocuments.map((doc) => ({
+                documentType: doc.documentType || undefined,
+                documentNumber: doc.documentNumber || undefined,
+                fileName: doc.fileName || undefined,
+                fileUrl: doc.fileUrl || undefined,
+              }))
+            : undefined,
         whoAreYou: whoAreYou || undefined,
         brands:
           brands.length > 0
@@ -763,74 +780,100 @@ export default function ProfilePage() {
     }
   };
 
-  // Business attachment handlers
-  const handleBusinessFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  // Business document handlers
+  const addBusinessDocument = () => {
+    const newDocument: BusinessDocument = {
+      id: Date.now().toString(),
+      documentType: '',
+      documentNumber: '',
+      file: null,
+      fileName: '',
+      fileUrl: undefined,
+    };
+    setBusinessDocuments([...businessDocuments, newDocument]);
+  };
+
+  const removeBusinessDocument = (id: string) => {
+    setBusinessDocuments(businessDocuments.filter((doc) => doc.id !== id));
+  };
+
+  const updateBusinessDocument = (id: string, field: keyof BusinessDocument, value: string) => {
+    setBusinessDocuments(
+      businessDocuments.map((doc) =>
+        doc.id === id ? { ...doc, [field]: value } : doc
+      )
+    );
+  };
+
+  const handleBusinessDocumentUpload = async (
+    documentId: string,
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     try {
-      if (file.size > 10 * 1024 * 1024) { // 10MB limit
+      if (file.size > 10 * 1024 * 1024) {
         showToast({ type: 'error', message: 'File size should be less than 10MB' });
         return;
       }
 
-      setUploadingBusinessFile(true);
+      setUploadingDocument(documentId);
       const token = getAuthToken();
       if (!token) {
         showToast({ type: 'error', message: 'Not authenticated' });
-        setUploadingBusinessFile(false);
         return;
       }
 
-      // Upload to S3
-      const result = await uploadFile(token, file, 'vendor-business-attachments');
+      const result = await uploadFile(token, file, 'vendor-business-documents');
 
-      // Update state
-      setBusinessAttachment({
-        file: file,
-        fileName: result.fileName,
-        fileUrl: result.url,
-      });
+      setBusinessDocuments(
+        businessDocuments.map((doc) =>
+          doc.id === documentId
+            ? { ...doc, file, fileName: result.fileName, fileUrl: result.url }
+            : doc
+        )
+      );
 
-      showToast({ type: 'success', message: 'File uploaded successfully!' });
+      showToast({ type: 'success', message: 'Document uploaded successfully!' });
     } catch (err: any) {
-      console.error('Error uploading business file:', err);
-      showToast({ type: 'error', message: err.message || 'Failed to upload file' });
+      console.error('Error uploading document:', err);
+      showToast({ type: 'error', message: err.message || 'Failed to upload document' });
     } finally {
-      setUploadingBusinessFile(false);
+      setUploadingDocument(null);
     }
   };
 
-  const handleViewBusinessFile = async () => {
-    if (!businessAttachment.fileUrl) return;
+  const handleViewBusinessDocument = async (documentId: string) => {
+    const document = businessDocuments.find((d) => d.id === documentId);
+    if (!document?.fileUrl) return;
 
     try {
-      setViewingBusinessFile(true);
+      setViewingDocument(documentId);
       const token = getAuthToken();
       if (!token) {
         showToast({ type: 'error', message: 'Not authenticated' });
         return;
       }
 
-      // Get signed URL for viewing
-      const signedUrl = await getFileSignedUrl(token, businessAttachment.fileUrl);
-      
-      // Open file in new tab
+      const signedUrl = await getFileSignedUrl(token, document.fileUrl);
       window.open(signedUrl, '_blank', 'noopener,noreferrer');
     } catch (err: any) {
       console.error('Error getting signed URL:', err);
-      showToast({ type: 'error', message: err.message || 'Failed to open file. Please try again.' });
+      showToast({ type: 'error', message: err.message || 'Failed to open document. Please try again.' });
     } finally {
-      setViewingBusinessFile(false);
+      setViewingDocument(null);
     }
   };
 
-  const removeBusinessFile = () => {
-    setBusinessAttachment({
-      file: null,
-      fileName: '',
-      fileUrl: undefined,
-    });
+  const removeBusinessDocumentFile = (documentId: string) => {
+    setBusinessDocuments(
+      businessDocuments.map((doc) =>
+        doc.id === documentId
+          ? { ...doc, file: null, fileName: '', fileUrl: undefined }
+          : doc
+      )
+    );
   };
 
   const handleSupplierCatalogUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -984,10 +1027,12 @@ export default function ProfilePage() {
               />
             </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Minimum Order Value
-                </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Minimum Order Value (₹)
+              </label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500">₹</span>
                 <input
                   type="number"
                   value={minimumOrderValue}
@@ -995,9 +1040,10 @@ export default function ProfilePage() {
                   placeholder="e.g., 10000"
                   min="0"
                   step="0.01"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
+            </div>
             </div>
 
             {/* Row 2: Website, Location */}
@@ -1236,81 +1282,169 @@ export default function ProfilePage() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Business Documents
-              </label>
-              {uploadingBusinessFile ? (
-                <div className="p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
-                  <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="text-sm text-gray-600">Uploading file...</p>
-                  </div>
-                </div>
-              ) : !businessAttachment.file && !businessAttachment.fileUrl ? (
-                <div>
-                  <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
-                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                      <svg className="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                      </svg>
-                      <p className="mb-2 text-sm text-gray-500">
-                        <span className="font-semibold">Click to upload</span> or drag and drop
-                      </p>
-                      <p className="text-xs text-gray-500">Any file type (MAX. 10MB)</p>
-                    </div>
-                    <input
-                      type="file"
-                      onChange={handleBusinessFileUpload}
-                      className="hidden"
-                      disabled={uploadingBusinessFile}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <div className="p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0">
-                      <svg className="w-8 h-8 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {businessAttachment.fileName}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        {businessAttachment.file && (
-                          <p className="text-xs text-gray-500">
-                            {(businessAttachment.file.size / (1024 * 1024)).toFixed(2)} MB
-                          </p>
-                        )}
-                        {businessAttachment.fileUrl && (
-                          <button
-                            type="button"
-                            onClick={handleViewBusinessFile}
-                            disabled={viewingBusinessFile}
-                            className="text-xs text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {viewingBusinessFile ? 'Opening...' : 'View File'}
-                          </button>
-                        )}
+              <div className="flex items-center justify-between mb-4">
+                <label className="block text-sm font-medium text-gray-700">
+                  Business Documents
+                </label>
+                <button
+                  type="button"
+                  onClick={addBusinessDocument}
+                  className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  Add Document
+                </button>
+              </div>
+
+              {businessDocuments.length === 0 && (
+                <p className="text-sm text-gray-500 mb-3">
+                  No documents added yet. Click &quot;Add Document&quot; to upload business documents.
+                </p>
+              )}
+
+              <div className="space-y-4">
+                {businessDocuments.map((document, index) => (
+                  <div key={document.id} className="border border-gray-200 rounded-lg p-4 relative">
+                    {businessDocuments.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeBusinessDocument(document.id)}
+                        className="absolute top-4 right-4 text-red-500 hover:text-red-700 transition-colors"
+                        title="Remove document"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <line x1="15" y1="9" x2="9" y2="15"></line>
+                          <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                      </button>
+                    )}
+
+                    {businessDocuments.length > 1 && (
+                      <div className="mb-4">
+                        <span className="text-sm font-medium text-gray-700">Document {index + 1}</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Type of Document
+                        </label>
+                        <select
+                          value={document.documentType}
+                          onChange={(e) => updateBusinessDocument(document.id, 'documentType', e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        >
+                          <option value="">Select document type</option>
+                          <option value="GST Certificate">GST Certificate</option>
+                          <option value="PAN Card">PAN Card</option>
+                          <option value="Company Registration">Company Registration</option>
+                          <option value="Trade License">Trade License</option>
+                          <option value="MSME Certificate">MSME Certificate</option>
+                          <option value="ISO Certificate">ISO Certificate</option>
+                          <option value="Bank Statement">Bank Statement</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Document Number
+                        </label>
+                        <input
+                          type="text"
+                          value={document.documentNumber}
+                          onChange={(e) => updateBusinessDocument(document.id, 'documentNumber', e.target.value)}
+                          placeholder="Enter document number"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        />
                       </div>
                     </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Document Upload
+                      </label>
+                      {uploadingDocument === document.id ? (
+                        <div className="p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
+                          <div className="flex items-center gap-3">
+                            <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                            <p className="text-sm text-gray-600">Uploading document...</p>
+                          </div>
+                        </div>
+                      ) : !document.file && !document.fileUrl ? (
+                        <div>
+                          <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                            <div className="flex flex-col items-center justify-center pt-3 pb-4">
+                              <svg className="w-8 h-8 mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                              </svg>
+                              <p className="mb-1 text-xs text-gray-500">
+                                <span className="font-semibold">Click to upload</span> or drag and drop
+                              </p>
+                              <p className="text-[11px] text-gray-500">Any file type (MAX. 10MB)</p>
+                            </div>
+                            <input
+                              type="file"
+                              onChange={(e) => handleBusinessDocumentUpload(document.id, e)}
+                              className="hidden"
+                              disabled={uploadingDocument === document.id}
+                            />
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="p-3 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="flex-shrink-0">
+                              <svg className="w-7 h-7 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-gray-900 truncate">
+                                {document.fileName}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                {document.file && (
+                                  <p className="text-[11px] text-gray-500">
+                                    {(document.file.size / (1024 * 1024)).toFixed(2)} MB
+                                  </p>
+                                )}
+                                {document.fileUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleViewBusinessDocument(document.id)}
+                                    disabled={viewingDocument === document.id}
+                                    className="text-[11px] text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {viewingDocument === document.id ? 'Opening...' : 'View Document'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeBusinessDocumentFile(document.id)}
+                            className="ml-3 p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Remove document"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10"></circle>
+                              <line x1="15" y1="9" x2="9" y2="15"></line>
+                              <line x1="9" y1="9" x2="15" y2="15"></line>
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={removeBusinessFile}
-                    className="ml-4 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Remove file"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="15" y1="9" x2="9" y2="15"></line>
-                      <line x1="9" y1="9" x2="15" y2="15"></line>
-                    </svg>
-                  </button>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -1479,72 +1613,118 @@ export default function ProfilePage() {
                   <div className="md:col-span-2">
                     <div className="flex items-center gap-3 mb-1">
                       <label className="block text-sm font-medium text-gray-700 whitespace-nowrap">
-                      Address Line 1
-                    </label>
-                      <div className="relative address-type-dropdown-container">
-                        <button
-                          type="button"
-                          onClick={() => setOpenAddressTypeDropdown(openAddressTypeDropdown === address.id ? null : address.id)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50 transition-colors"
-                        >
-                          <span className="text-gray-500">Tag:</span>
-                          <span className="font-semibold">
-                            {address.addressType === 'home' ? 'Home' : address.addressType === 'office' ? 'Office' : address.addressType === 'other' ? 'Other' : 'Office'}
-                          </span>
-                          <svg 
-                            width="10" 
-                            height="10" 
-                            viewBox="0 0 24 24" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            strokeWidth="2" 
-                            strokeLinecap="round" 
-                            strokeLinejoin="round"
-                            className={openAddressTypeDropdown === address.id ? 'transform rotate-180' : ''}
+                        Address Line 1
+                      </label>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div className="relative address-type-dropdown-container">
+                          <button
+                            type="button"
+                            onClick={() => setOpenAddressTypeDropdown(openAddressTypeDropdown === address.id ? null : address.id)}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50 transition-colors"
                           >
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                          </svg>
-                        </button>
-                        
-                        {openAddressTypeDropdown === address.id && (
-                          <div className="absolute z-10 mt-1 right-0 w-32 bg-white border border-gray-300 rounded-lg shadow-lg">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateBusinessAddress(address.id, 'addressType', 'home');
-                                setOpenAddressTypeDropdown(null);
-                              }}
-                              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
-                                address.addressType === 'home' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
-                              }`}
+                            <span className="text-gray-500">Tag:</span>
+                            <span className="font-semibold">
+                              {address.addressType === 'others'
+                                ? address.customAddressLabel || 'Others'
+                                : address.addressType === 'office'
+                                ? 'Office'
+                                : address.addressType === 'warehouse'
+                                ? 'Warehouse'
+                                : address.addressType === 'factory'
+                                ? 'Factory'
+                                : address.addressType === 'store'
+                                ? 'Store'
+                                : 'Office'}
+                            </span>
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className={openAddressTypeDropdown === address.id ? 'transform rotate-180' : ''}
                             >
-                              Home
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateBusinessAddress(address.id, 'addressType', 'office');
-                                setOpenAddressTypeDropdown(null);
-                              }}
-                              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
-                                address.addressType === 'office' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
-                              }`}
-                            >
-                              Office
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateBusinessAddress(address.id, 'addressType', 'other');
-                                setOpenAddressTypeDropdown(null);
-                              }}
-                              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
-                                address.addressType === 'other' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
-                              }`}
-                            >
-                              Other
-                            </button>
-                          </div>
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </button>
+
+                          {openAddressTypeDropdown === address.id && (
+                            <div className="absolute z-10 mt-1 right-0 w-32 bg-white border border-gray-300 rounded-lg shadow-lg">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateBusinessAddress(address.id, 'addressType', 'office');
+                                  setOpenAddressTypeDropdown(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                  address.addressType === 'office' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                                }`}
+                              >
+                                Office
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateBusinessAddress(address.id, 'addressType', 'warehouse');
+                                  setOpenAddressTypeDropdown(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                  address.addressType === 'warehouse' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                                }`}
+                              >
+                                Warehouse
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateBusinessAddress(address.id, 'addressType', 'factory');
+                                  setOpenAddressTypeDropdown(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                  address.addressType === 'factory' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                                }`}
+                              >
+                                Factory
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateBusinessAddress(address.id, 'addressType', 'store');
+                                  setOpenAddressTypeDropdown(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                  address.addressType === 'store' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                                }`}
+                              >
+                                Store
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateBusinessAddress(address.id, 'addressType', 'others');
+                                  setOpenAddressTypeDropdown(null);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                  address.addressType === 'others' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                                }`}
+                              >
+                                Others
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {address.addressType === 'others' && (
+                          <input
+                            type="text"
+                            value={address.customAddressLabel || ''}
+                            onChange={(e) => updateBusinessAddress(address.id, 'customAddressLabel', e.target.value)}
+                            placeholder="Custom tag"
+                            className="px-2 py-1 border border-gray-300 rounded-md bg-gray-50 text-[11px] focus:ring-1 focus:ring-orange-500 focus:border-orange-500 max-w-[160px]"
+                          />
                         )}
                       </div>
                     </div>
@@ -1944,11 +2124,12 @@ export default function ProfilePage() {
                   <path d="M3 7h18M3 12h18M3 17h18"></path>
                 </svg>
               </div>
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">Brands & Items</h2>
-                <p className="text-sm text-gray-500">Add brands and items with catalogs you supply.</p>
-              </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Brands & Items</h2>
+              <p className="text-sm text-gray-500">Add brands and items with catalogs you supply.</p>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={addBrand}
@@ -1960,7 +2141,72 @@ export default function ProfilePage() {
               </svg>
               Add Brand
             </button>
+            <div className="relative">
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={handleSupplierCatalogUpload}
+                className="hidden"
+                id="supplier-catalog-upload"
+                disabled={uploadingSupplierCatalog}
+              />
+              <label
+                htmlFor="supplier-catalog-upload"
+                className="flex items-center justify-center w-10 h-10 border-2 border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50 hover:border-orange-500 transition-colors cursor-pointer"
+                title={supplierCatalog.fileUrl ? 'Update Supplier Catalog' : 'Upload Supplier Catalog'}
+              >
+                {uploadingSupplierCatalog ? (
+                  <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                ) : supplierCatalog.fileUrl ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  </svg>
+                )}
+              </label>
+            </div>
+            {supplierCatalog.fileUrl && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleViewSupplierCatalog}
+                  disabled={viewingSupplierCatalog}
+                  className="flex items-center justify-center w-10 h-10 border-2 border-green-300 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+                  title="View Supplier Catalog"
+                >
+                  {viewingSupplierCatalog ? (
+                    <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={removeSupplierCatalog}
+                  className="flex items-center justify-center w-10 h-10 border-2 border-red-300 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+                  title="Remove Supplier Catalog"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                  </svg>
+                </button>
+              </>
+            )}
           </div>
+        </div>
 
           {brands.length === 0 && (
             <p className="text-sm text-gray-500">No brands added yet. Click &quot;Add Brand&quot; to get started.</p>
@@ -2048,104 +2294,6 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* Supplier Catalog Section (only for suppliers) */}
-      {whoAreYou === 'supplier' && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Supplier Catalog</h2>
-              <p className="text-sm text-gray-500">Upload a global catalog PDF for all your brands and categories.</p>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Catalog PDF
-            </label>
-            {uploadingSupplierCatalog ? (
-              <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
-                <div className="flex items-center gap-3">
-                  <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                  <p className="text-sm text-gray-600">Uploading PDF...</p>
-                </div>
-              </div>
-            ) : !supplierCatalog.fileUrl ? (
-              <div className="mt-1">
-                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <svg className="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                    </svg>
-                    <p className="mb-1 text-sm text-gray-500">
-                      <span className="font-semibold">Click to upload</span> or drag and drop
-                    </p>
-                    <p className="text-xs text-gray-500">PDF only (MAX. 10MB)</p>
-                  </div>
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    onChange={handleSupplierCatalogUpload}
-                    className="hidden"
-                    disabled={uploadingSupplierCatalog}
-                  />
-                </label>
-              </div>
-            ) : (
-              <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex-shrink-0">
-                    <svg className="w-8 h-8 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {supplierCatalog.fileName}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1">
-                      {supplierCatalog.file && (
-                        <p className="text-xs text-gray-500">
-                          {(supplierCatalog.file.size / (1024 * 1024)).toFixed(2)} MB
-                        </p>
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleViewSupplierCatalog}
-                        disabled={viewingSupplierCatalog}
-                        className="text-xs text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {viewingSupplierCatalog ? 'Opening...' : 'View Catalog'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={removeSupplierCatalog}
-                  className="ml-3 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                  title="Remove catalog"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="15" y1="9" x2="9" y2="15"></line>
-                    <line x1="9" y1="9" x2="15" y2="15"></line>
-                  </svg>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Catalogs Section (only for manufacturers) */}
       {whoAreYou === 'manufacturer' && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -2176,11 +2324,11 @@ export default function ProfilePage() {
 
           <div className="space-y-6">
             {catalogs.map((catalog, index) => (
-              <div key={catalog.id} className="border border-gray-200 rounded-lg p-4 relative">
+              <div key={catalog.id} className="border border-gray-200 rounded-lg p-4 pt-8 relative">
                 {catalogs.length > 1 && (
                   <button
                     onClick={() => removeCatalog(catalog.id)}
-                    className="absolute top-4 right-4 text-red-500 hover:text-red-700 transition-colors"
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700 transition-colors"
                     title="Remove catalog"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2191,11 +2339,82 @@ export default function ProfilePage() {
                   </button>
                 )}
                 
-                {catalogs.length > 1 && (
-                  <div className="mb-4">
+                <div className="mb-4 flex items-center justify-between">
+                  {catalogs.length > 1 && (
                     <span className="text-sm font-medium text-gray-700">Catalog {index + 1}</span>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={(e) => handlePdfUpload(catalog.id, e)}
+                        className="hidden"
+                        id={`catalog-upload-${catalog.id}`}
+                        disabled={uploadingPdf === catalog.id}
+                      />
+                      <label
+                        htmlFor={`catalog-upload-${catalog.id}`}
+                        className="flex items-center justify-center w-10 h-10 border-2 border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50 hover:border-orange-500 transition-colors cursor-pointer"
+                        title={catalog.pdfUrl ? 'Update Catalog PDF' : 'Upload Catalog PDF'}
+                      >
+                        {uploadingPdf === catalog.id ? (
+                          <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                        ) : catalog.pdfUrl ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                          </svg>
+                        )}
+                      </label>
+                    </div>
+                    {catalog.pdfUrl && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const catalogIndex = catalogs.findIndex(c => c.id === catalog.id);
+                            if (catalogIndex !== -1) {
+                              handleViewPdf(catalog.id, catalogIndex);
+                            }
+                          }}
+                          disabled={viewingPdf === catalog.id}
+                          className="flex items-center justify-center w-10 h-10 border-2 border-green-300 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+                          title="View Catalog PDF"
+                        >
+                          {viewingPdf === catalog.id ? (
+                            <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                              <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removePdfFile(catalog.id)}
+                          className="flex items-center justify-center w-10 h-10 border-2 border-red-300 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+                          title="Remove Catalog PDF"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                          </svg>
+                        </button>
+                      </>
+                    )}
                   </div>
-                )}
+                </div>
 
                 <div className="space-y-4">
                   <div>
@@ -2222,92 +2441,6 @@ export default function ProfilePage() {
                       rows={3}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Catalog PDF
-                    </label>
-                    {uploadingPdf === catalog.id ? (
-                      <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
-                        <div className="flex items-center gap-3">
-                          <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                          <p className="text-sm text-gray-600">Uploading PDF...</p>
-                        </div>
-                      </div>
-                    ) : !catalog.pdfFile && !catalog.pdfUrl ? (
-                      <div className="mt-1">
-                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
-                          <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                            <svg className="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                            </svg>
-                            <p className="mb-2 text-sm text-gray-500">
-                              <span className="font-semibold">Click to upload</span> or drag and drop
-                            </p>
-                            <p className="text-xs text-gray-500">PDF only (MAX. 10MB)</p>
-                          </div>
-                          <input
-                            type="file"
-                            accept="application/pdf"
-                            onChange={(e) => handlePdfUpload(catalog.id, e)}
-                            className="hidden"
-                            disabled={uploadingPdf === catalog.id}
-                          />
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="flex-shrink-0">
-                            <svg className="w-8 h-8 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">
-                              {catalog.pdfFileName}
-                            </p>
-                            <div className="flex items-center gap-2">
-                              {catalog.pdfFile && (
-                                <p className="text-xs text-gray-500">
-                                  {(catalog.pdfFile.size / (1024 * 1024)).toFixed(2)} MB
-                                </p>
-                              )}
-                              {catalog.pdfUrl && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    // Find the index of this catalog in the catalogs array
-                                    const catalogIndex = catalogs.findIndex(c => c.id === catalog.id);
-                                    if (catalogIndex !== -1) {
-                                      // Convert from 1-based to 0-based index (backend expects 0-based)
-                                      handleViewPdf(catalog.id, catalogIndex);
-                                    }
-                                  }}
-                                  disabled={viewingPdf === catalog.id}
-                                  className="text-xs text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {viewingPdf === catalog.id ? 'Opening...' : 'View PDF'}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removePdfFile(catalog.id)}
-                          className="ml-4 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remove PDF"
-                        >
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="15" y1="9" x2="9" y2="15"></line>
-                            <line x1="9" y1="9" x2="15" y2="15"></line>
-                          </svg>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>

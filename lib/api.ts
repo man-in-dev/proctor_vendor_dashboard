@@ -10,6 +10,8 @@ export interface SignupPayload {
   email: string;
   password: string;
   name: string;
+  phone?: string;
+  role?: string;
 }
 
 export interface TokenResponse {
@@ -18,6 +20,7 @@ export interface TokenResponse {
     id: string;
     email: string;
     name: string;
+    phone?: string;
   };
 }
 
@@ -25,6 +28,8 @@ export interface CurrentUser {
   id: string;
   email: string;
   name: string;
+  role?: string;
+  phone?: string;
 }
 
 export interface ApiErrorResponse {
@@ -125,6 +130,8 @@ export interface BusinessAddress {
   city: string;
   state: string;
   pincode: string;
+  addressType?: 'office' | 'warehouse' | 'factory' | 'store' | 'others';
+  customAddressLabel?: string;
 }
 
 export interface PlatformRating {

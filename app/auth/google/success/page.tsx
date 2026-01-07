@@ -3,6 +3,7 @@
 import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { saveAuthToken } from '@/lib/storage';
+import { getCurrentUser } from '@/lib/api';
 
 function GoogleAuthSuccessContent() {
   const router = useRouter();
@@ -14,6 +15,7 @@ function GoogleAuthSuccessContent() {
       const error = searchParams.get('error');
       // Default to /profile instead of / to avoid redirect chain
       const redirect = searchParams.get('redirect') || '/profile';
+      const phoneFromQuery = searchParams.get('phone');
 
       if (error) {
         // Redirect to login with error
@@ -29,11 +31,36 @@ function GoogleAuthSuccessContent() {
           // Small delay to ensure token is saved before navigation
           // This prevents race conditions with ProtectedRoute checks
           await new Promise(resolve => setTimeout(resolve, 100));
-          
-          // Normalize redirect path - if it's just '/', redirect to /profile
-          const redirectPath = redirect === '/' ? '/profile' : redirect;
-          
-          // Redirect to the intended page
+
+          // Decide where to redirect and optionally save phone
+          let redirectPath = redirect === '/' ? '/profile' : redirect;
+          try {
+            const currentUser = await getCurrentUser(token);
+
+            // If we got phone from the initial form and user doesn't have one yet, save it
+            if (!currentUser.phone && phoneFromQuery) {
+              try {
+                await fetch(
+                  `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/me`,
+                  {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({ phone: phoneFromQuery }),
+                  }
+                );
+              } catch (patchErr) {
+                console.error('Failed to update phone after Google OAuth:', patchErr);
+              }
+            }
+          } catch (e) {
+            // If /me fails, fall back to original redirect
+            console.error('Failed to fetch current user after Google OAuth:', e);
+          }
+
+          // Redirect to the intended page or phone capture
           router.push(redirectPath);
         } catch (err) {
           console.error('Error storing token:', err);
