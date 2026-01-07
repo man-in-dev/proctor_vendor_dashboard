@@ -116,6 +116,7 @@ export interface ContactDetail {
   contactPerson: string;
   email: string;
   phone: string;
+  designation?: string;
 }
 
 export interface BusinessAddress {
@@ -152,7 +153,6 @@ export interface VendorProfile {
   teamSize?: number;
   about?: string;
   website?: string;
-  designation?: string;
   location?: string;
   minimumOrderValue?: number;
   clientele?: ClienteleEntry[];

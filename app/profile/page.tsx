@@ -10,6 +10,7 @@ interface ContactDetail {
   contactPerson: string;
   email: string;
   phone: string;
+  designation: string;
 }
 
 interface BusinessAddress {
@@ -62,14 +63,14 @@ interface ClienteleEntry {
 interface Brand {
   id: string;
   name: string;
-  items: {
-    id: string;
-    name: string;
-    description: string;
-  }[];
-  catalogFileName: string;
-  catalogUrl?: string;
-  file?: File | null;
+  categories: string[];
+  categoryInput: string;
+}
+
+interface SupplierCatalog {
+  file: File | null;
+  fileName: string;
+  fileUrl?: string;
 }
 
 interface BankAccount {
@@ -95,7 +96,6 @@ export default function ProfilePage() {
   const [teamSize, setTeamSize] = useState<string>('');
   const [about, setAbout] = useState<string>('');
   const [website, setWebsite] = useState<string>('');
-  const [designation, setDesignation] = useState<string>('');
   const [location, setLocation] = useState<string>('');
   const [minimumOrderValue, setMinimumOrderValue] = useState<string>('');
   const [platformRatings, setPlatformRatings] = useState<PlatformRating[]>([]);
@@ -121,6 +121,31 @@ export default function ProfilePage() {
     fileUrl: undefined,
   });
   const [clientele, setClientele] = useState<ClienteleEntry[]>([]);
+  const [supplierCatalog, setSupplierCatalog] = useState<SupplierCatalog>({
+    file: null,
+    fileName: '',
+    fileUrl: undefined,
+  });
+  const [uploadingSupplierCatalog, setUploadingSupplierCatalog] = useState(false);
+  const [viewingSupplierCatalog, setViewingSupplierCatalog] = useState(false);
+  const [openAddressTypeDropdown, setOpenAddressTypeDropdown] = useState<string | null>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (openAddressTypeDropdown && !target.closest('.address-type-dropdown-container')) {
+        setOpenAddressTypeDropdown(null);
+      }
+    };
+
+    if (openAddressTypeDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [openAddressTypeDropdown]);
 
   // Load profile data on mount
   useEffect(() => {
@@ -145,7 +170,6 @@ export default function ProfilePage() {
         setTeamSize(profile.teamSize?.toString() || '');
         setAbout(profile.about || '');
         setWebsite(profile.website || '');
-        setDesignation((profile as any).designation || '');
         setLocation((profile as any).location || '');
         setMinimumOrderValue((profile as any).minimumOrderValue?.toString() || '');
         
@@ -166,6 +190,7 @@ export default function ProfilePage() {
             contactPerson: contact.contactPerson,
             email: contact.email,
             phone: contact.phone,
+            designation: contact.designation || '',
           }))
         );
         
@@ -222,18 +247,34 @@ export default function ProfilePage() {
             rawBrands.map((b, bIndex) => ({
               id: (bIndex + 1).toString(),
               name: b.name || '',
-              items: (b.items || []).map((it: any, iIndex: number) => ({
-                id: `${bIndex + 1}-${iIndex + 1}`,
-                name: it.name || '',
-                description: it.description || '',
-              })),
-              catalogFileName: b.catalogFileName || '',
-              catalogUrl: b.catalogUrl,
-              file: null,
+              categories: (b.items || []).map((it: any) => it.name || '').filter((name: string) => name.length > 0),
+              categoryInput: '',
             })),
           );
+          
+          // Load supplier catalog from first brand (backward compatibility) or separate field
+          const supplierCatalogUrl = (profile as any).supplierCatalogUrl;
+          const supplierCatalogFileName = (profile as any).supplierCatalogFileName;
+          if (supplierCatalogUrl || (rawBrands.length > 0 && rawBrands[0].catalogUrl)) {
+            setSupplierCatalog({
+              file: null,
+              fileName: supplierCatalogFileName || rawBrands[0].catalogFileName || '',
+              fileUrl: supplierCatalogUrl || rawBrands[0].catalogUrl,
+            });
+          }
         } else {
           setBrands([]);
+        }
+        
+        // Also check for supplier catalog in separate fields
+        const supplierCatalogUrl = (profile as any).supplierCatalogUrl;
+        const supplierCatalogFileName = (profile as any).supplierCatalogFileName;
+        if (supplierCatalogUrl && !supplierCatalog.fileUrl) {
+          setSupplierCatalog({
+            file: null,
+            fileName: supplierCatalogFileName || '',
+            fileUrl: supplierCatalogUrl,
+          });
         }
         
         if (profile.bankDetails) {
@@ -307,7 +348,6 @@ export default function ProfilePage() {
         teamSize: teamSize ? parseInt(teamSize) : undefined,
         about: about || undefined,
         website: website || undefined,
-        designation: designation || undefined,
         location: location || undefined,
         minimumOrderValue: minimumOrderValue ? parseFloat(minimumOrderValue) : undefined,
         platformRatings: platformRatings.map(rating => ({
@@ -320,6 +360,7 @@ export default function ProfilePage() {
           contactPerson: contact.contactPerson,
           email: contact.email,
           phone: contact.phone,
+          designation: contact.designation || undefined,
         })),
         businessAddresses: businessAddresses.map(address => ({
           addressLine1: address.addressLine1,
@@ -350,14 +391,14 @@ export default function ProfilePage() {
           brands.length > 0
             ? brands.map((b) => ({
                 name: b.name,
-                items: b.items.map((it) => ({
-                  name: it.name,
-                  description: it.description,
+                items: b.categories.map((cat) => ({
+                  name: cat,
+                  description: '',
                 })),
-                catalogFileName: b.catalogFileName,
-                catalogUrl: b.catalogUrl,
               }))
             : undefined,
+        supplierCatalogUrl: supplierCatalog.fileUrl || undefined,
+        supplierCatalogFileName: supplierCatalog.fileName || undefined,
         bankAccounts:
           bankAccounts.length > 0
             ? bankAccounts.map((b) => ({
@@ -396,6 +437,7 @@ export default function ProfilePage() {
       contactPerson: '',
       email: '',
       phone: '',
+      designation: '',
     };
     setContactDetails([...contactDetails, newContact]);
   };
@@ -640,15 +682,13 @@ export default function ProfilePage() {
     );
   };
 
-  // Supplier brands & items
+  // Supplier brands & categories
   const addBrand = () => {
     const newBrand: Brand = {
       id: Date.now().toString(),
       name: '',
-      items: [],
-      catalogFileName: '',
-      catalogUrl: undefined,
-      file: null,
+      categories: [],
+      categoryInput: '',
     };
     setBrands([...brands, newBrand]);
   };
@@ -657,66 +697,70 @@ export default function ProfilePage() {
     setBrands(brands.filter((b) => b.id !== id));
   };
 
-  const updateBrand = (id: string, field: keyof Brand, value: string) => {
+  const updateBrand = (id: string, field: keyof Brand, value: string | string[]) => {
     setBrands(
       brands.map((b) => (b.id === id ? { ...b, [field]: value } : b)),
     );
   };
 
-  const addBrandItem = (brandId: string) => {
-    setBrands((prev) =>
-      prev.map((b) =>
+  const addBrandCategory = (brandId: string) => {
+    const brand = brands.find((b) => b.id === brandId);
+    if (!brand) return;
+
+    const raw = brand.categoryInput
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+
+    if (raw.length === 0) return;
+
+    const newCategories = raw.filter(
+      (cat) => !brand.categories.includes(cat),
+    );
+
+    if (newCategories.length === 0) {
+      setBrands(
+        brands.map((b) =>
+          b.id === brandId ? { ...b, categoryInput: '' } : b,
+        ),
+      );
+      return;
+    }
+
+    setBrands(
+      brands.map((b) =>
         b.id === brandId
           ? {
               ...b,
-              items: [
-                ...b.items,
-                {
-                  id: Date.now().toString(),
-                  name: '',
-                  description: '',
-                  catalogFileName: '',
-                  catalogUrl: undefined,
-                  file: null,
-                },
-              ],
+              categories: [...b.categories, ...newCategories],
+              categoryInput: '',
             }
           : b,
       ),
     );
   };
 
-  const removeBrandItem = (brandId: string, itemId: string) => {
-    setBrands((prev) =>
-      prev.map((b) =>
+  const removeBrandCategory = (brandId: string, category: string) => {
+    setBrands(
+      brands.map((b) =>
         b.id === brandId
           ? {
               ...b,
-              items: b.items.filter((it) => it.id !== itemId),
+              categories: b.categories.filter((cat) => cat !== category),
             }
           : b,
       ),
     );
   };
 
-  const updateBrandItem = (
+  const handleBrandCategoryKeyDown = (
     brandId: string,
-    itemId: string,
-    field: 'name' | 'description',
-    value: any,
+    e: React.KeyboardEvent<HTMLInputElement>,
   ) => {
-    setBrands((prev) =>
-      prev.map((b) =>
-        b.id === brandId
-          ? {
-              ...b,
-              items: b.items.map((it) =>
-                it.id === itemId ? { ...it, [field]: value } : it,
-              ),
-            }
-          : b,
-      ),
-    );
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addBrandCategory(brandId);
+    }
   };
 
   // Business attachment handlers
@@ -789,10 +833,7 @@ export default function ProfilePage() {
     });
   };
 
-  const handleBrandCatalogUpload = async (
-    brandId: string,
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
+  const handleSupplierCatalogUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -806,46 +847,57 @@ export default function ProfilePage() {
         return;
       }
 
+      setUploadingSupplierCatalog(true);
       const token = getAuthToken();
       if (!token) {
         showToast({ type: 'error', message: 'Not authenticated' });
         return;
       }
 
-      const result = await uploadFile(token, file, 'vendor-brand-catalogs');
+      const result = await uploadFile(token, file, 'vendor-supplier-catalogs');
 
-      setBrands((prev) =>
-        prev.map((b) =>
-          b.id === brandId
-            ? { ...b, file, catalogFileName: result.fileName, catalogUrl: result.url }
-            : b,
-        ),
-      );
+      setSupplierCatalog({
+        file: file,
+        fileName: result.fileName,
+        fileUrl: result.url,
+      });
 
       showToast({ type: 'success', message: 'Catalog uploaded successfully!' });
     } catch (err: any) {
-      console.error('Error uploading brand catalog:', err);
+      console.error('Error uploading supplier catalog:', err);
       showToast({ type: 'error', message: err.message || 'Failed to upload catalog' });
+    } finally {
+      setUploadingSupplierCatalog(false);
     }
   };
 
-  const handleViewBrandCatalog = async (brandId: string) => {
-    const brand = brands.find((b) => b.id === brandId);
-    if (!brand?.catalogUrl) return;
+  const handleViewSupplierCatalog = async () => {
+    if (!supplierCatalog.fileUrl) return;
 
     try {
+      setViewingSupplierCatalog(true);
       const token = getAuthToken();
       if (!token) {
         showToast({ type: 'error', message: 'Not authenticated' });
         return;
       }
 
-      const signedUrl = await getFileSignedUrl(token, brand.catalogUrl);
+      const signedUrl = await getFileSignedUrl(token, supplierCatalog.fileUrl);
       window.open(signedUrl, '_blank', 'noopener,noreferrer');
     } catch (err: any) {
-      console.error('Error getting brand item catalog URL:', err);
+      console.error('Error getting supplier catalog URL:', err);
       showToast({ type: 'error', message: err.message || 'Failed to open catalog. Please try again.' });
+    } finally {
+      setViewingSupplierCatalog(false);
     }
+  };
+
+  const removeSupplierCatalog = () => {
+    setSupplierCatalog({
+      file: null,
+      fileName: '',
+      fileUrl: undefined,
+    });
   };
 
   return (
@@ -901,7 +953,9 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="space-y-4">
+            {/* Row 1: Experience, Team Size, Minimum Order Value */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Experience (Years)
@@ -930,20 +984,25 @@ export default function ProfilePage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Designation
-              </label>
-              <input
-                type="text"
-                value={designation}
-                onChange={(e) => setDesignation(e.target.value)}
-                placeholder="e.g., Procurement Manager, Owner, Director"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Minimum Order Value
+                </label>
+                <input
+                  type="number"
+                  value={minimumOrderValue}
+                  onChange={(e) => setMinimumOrderValue(e.target.value)}
+                  placeholder="e.g., 10000"
+                  min="0"
+                  step="0.01"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
-            <div>
+            {/* Row 2: Website, Location */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Website
               </label>
@@ -956,35 +1015,22 @@ export default function ProfilePage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Location
-              </label>
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="e.g., Mumbai, India"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Location
+                </label>
+                <input
+                  type="text"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="e.g., Mumbai, India"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
+            {/* Row 3: About */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Minimum Order Value
-              </label>
-              <input
-                type="number"
-                value={minimumOrderValue}
-                onChange={(e) => setMinimumOrderValue(e.target.value)}
-                placeholder="e.g., 10000"
-                min="0"
-                step="0.01"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-            </div>
-
-            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 About
               </label>
@@ -1110,7 +1156,7 @@ export default function ProfilePage() {
                     />
                   </div>
 
-                  <div className="md:col-span-2 md:col-span-1">
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Platform Link
                     </label>
@@ -1319,7 +1365,7 @@ export default function ProfilePage() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Contact Person
@@ -1329,6 +1375,19 @@ export default function ProfilePage() {
                       value={contact.contactPerson}
                       onChange={(e) => updateContactDetail(contact.id, 'contactPerson', e.target.value)}
                       placeholder="Full Name"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Designation
+                    </label>
+                    <input
+                      type="text"
+                      value={contact.designation}
+                      onChange={(e) => updateContactDetail(contact.id, 'designation', e.target.value)}
+                      placeholder="e.g., Procurement Manager, Owner"
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     />
                   </div>
@@ -1408,33 +1467,87 @@ export default function ProfilePage() {
                   </button>
                 )}
                 
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-gray-700">
-                    Address {index + 1}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    {(['home', 'office', 'other'] as const).map((type) => (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => updateBusinessAddress(address.id, 'addressType', type)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                          address.addressType === type
-                            ? 'bg-purple-100 text-purple-700 border-purple-300'
-                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {type === 'home' ? 'Home' : type === 'office' ? 'Office' : 'Other'}
-                      </button>
-                    ))}
+                {businessAddresses.length > 1 && (
+                  <div className="mb-4">
+                    <span className="text-sm font-medium text-gray-700">
+                      Address {index + 1}
+                    </span>
                   </div>
-                </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <div className="flex items-center gap-3 mb-1">
+                      <label className="block text-sm font-medium text-gray-700 whitespace-nowrap">
                       Address Line 1
                     </label>
+                      <div className="relative address-type-dropdown-container">
+                        <button
+                          type="button"
+                          onClick={() => setOpenAddressTypeDropdown(openAddressTypeDropdown === address.id ? null : address.id)}
+                          className="flex items-center gap-1 px-2 py-1 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                          <span className="text-gray-500">Tag:</span>
+                          <span className="font-semibold">
+                            {address.addressType === 'home' ? 'Home' : address.addressType === 'office' ? 'Office' : address.addressType === 'other' ? 'Other' : 'Office'}
+                          </span>
+                          <svg 
+                            width="10" 
+                            height="10" 
+                            viewBox="0 0 24 24" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            strokeWidth="2" 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round"
+                            className={openAddressTypeDropdown === address.id ? 'transform rotate-180' : ''}
+                          >
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                          </svg>
+                        </button>
+                        
+                        {openAddressTypeDropdown === address.id && (
+                          <div className="absolute z-10 mt-1 right-0 w-32 bg-white border border-gray-300 rounded-lg shadow-lg">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateBusinessAddress(address.id, 'addressType', 'home');
+                                setOpenAddressTypeDropdown(null);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                address.addressType === 'home' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                              }`}
+                            >
+                              Home
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateBusinessAddress(address.id, 'addressType', 'office');
+                                setOpenAddressTypeDropdown(null);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                address.addressType === 'office' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                              }`}
+                            >
+                              Office
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateBusinessAddress(address.id, 'addressType', 'other');
+                                setOpenAddressTypeDropdown(null);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                                address.addressType === 'other' ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                              }`}
+                            >
+                              Other
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     <input
                       type="text"
                       value={address.addressLine1}
@@ -1503,7 +1616,8 @@ export default function ProfilePage() {
 
         {/* Bank Details Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
@@ -1512,78 +1626,8 @@ export default function ProfilePage() {
             </div>
             <div>
               <h2 className="text-xl font-semibold text-gray-900">Bank Details</h2>
-              <p className="text-sm text-gray-500">Payment account information (masked for security).</p>
+                <p className="text-sm text-gray-500">Payment account information for payouts.</p>
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Bank Name
-              </label>
-              <input
-                type="text"
-                defaultValue="HDFC Bank"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Account Holder Name
-              </label>
-              <input
-                type="text"
-                defaultValue="Premium Supplies Co. Pvt Ltd"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Account Number
-              </label>
-              <input
-                type="text"
-                defaultValue=".......7890"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                readOnly
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                IFSC Code
-              </label>
-              <input
-                type="text"
-                defaultValue="HDFC0001234"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-            </div>
-          </div>
-
-          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <p className="text-sm text-amber-800">
-              <strong>Note:</strong> To update bank details, please contact support for verification.
-            </p>
-          </div>
-        </div>
-
-        {/* Additional Bank Accounts (multiple) */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 4h18v16H3z"></path>
-                  <path d="M3 10h18"></path>
-                </svg>
-              </div>
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">Additional Bank Accounts</h2>
-                <p className="text-sm text-gray-500">Add multiple bank accounts for payouts.</p>
-              </div>
             </div>
             <button
               type="button"
@@ -1600,7 +1644,7 @@ export default function ProfilePage() {
 
           {bankAccounts.length === 0 && (
             <p className="text-sm text-gray-500 mb-3">
-              No additional bank accounts added yet. Click &quot;Add Account&quot; to create one.
+              No bank accounts added yet. Click &quot;Add Account&quot; to create one.
             </p>
           )}
 
@@ -1626,54 +1670,54 @@ export default function ProfilePage() {
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-800 border border-yellow-200">
                     Account {index + 1}
                   </span>
-                </div>
+          </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Bank Name
-                    </label>
-                    <input
-                      type="text"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Bank Name
+              </label>
+              <input
+                type="text"
                       value={account.bankName}
                       onChange={(e) => updateBankAccount(account.id, 'bankName', e.target.value)}
                       placeholder="e.g., HDFC Bank"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    />
-                  </div>
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Account Holder Name
-                    </label>
-                    <input
-                      type="text"
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Account Holder Name
+              </label>
+              <input
+                type="text"
                       value={account.accountHolderName}
                       onChange={(e) => updateBankAccount(account.id, 'accountHolderName', e.target.value)}
                       placeholder="e.g., Premium Supplies Co. Pvt Ltd"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    />
-                  </div>
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Account Number
-                    </label>
-                    <input
-                      type="text"
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Account Number
+              </label>
+              <input
+                type="text"
                       value={account.accountNumber}
                       onChange={(e) => updateBankAccount(account.id, 'accountNumber', e.target.value)}
                       placeholder="Enter full account number"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    />
-                  </div>
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      IFSC Code
-                    </label>
-                    <input
-                      type="text"
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                IFSC Code
+              </label>
+              <input
+                type="text"
                       value={account.ifscCode}
                       onChange={(e) => updateBankAccount(account.id, 'ifscCode', e.target.value)}
                       placeholder="e.g., HDFC0001234"
@@ -1683,8 +1727,8 @@ export default function ProfilePage() {
                 </div>
               </div>
             ))}
+            </div>
           </div>
-        </div>
 
         {/* Clientele Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -1794,17 +1838,17 @@ export default function ProfilePage() {
         {/* Industries Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                <polyline points="9 22 9 12 15 12 15 22"></polyline>
-              </svg>
+              <div className="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                  <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Industries</h2>
+                <p className="text-sm text-gray-500">Industries you serve.</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Industries</h2>
-              <p className="text-sm text-gray-500">Industries you serve.</p>
-            </div>
-          </div>
 
           {/* Existing industries as badges */}
           <div className="flex flex-wrap gap-2 mb-4">
@@ -1817,7 +1861,7 @@ export default function ProfilePage() {
                 className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-pink-50 text-pink-700 text-xs border border-pink-200"
               >
                 <span>{industry.name}</span>
-                <button
+            <button
                   type="button"
                   onClick={() => removeIndustry(industry.id)}
                   className="ml-1 text-pink-500 hover:text-pink-700"
@@ -1926,17 +1970,41 @@ export default function ProfilePage() {
             {brands.map((brand) => (
               <div key={brand.id} className="border border-gray-200 rounded-lg p-4">
                 <div className="flex items-start justify-between gap-4 mb-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Brand Name
-                    </label>
-                    <input
-                      type="text"
-                      value={brand.name}
-                      onChange={(e) => updateBrand(brand.id, 'name', e.target.value)}
-                      placeholder="e.g., BrandX"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    />
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Brand Name
+                      </label>
+                  <input
+                    type="text"
+                        value={brand.name}
+                        onChange={(e) => updateBrand(brand.id, 'name', e.target.value)}
+                        placeholder="e.g., BrandX"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  />
+                </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Categories
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={brand.categoryInput}
+                          onChange={(e) => updateBrand(brand.id, 'categoryInput', e.target.value)}
+                          onKeyDown={(e) => handleBrandCategoryKeyDown(brand.id, e)}
+                          placeholder="Type and press Enter or comma"
+                          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                        />
+                  <button
+                          type="button"
+                          onClick={() => addBrandCategory(brand.id)}
+                          className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium whitespace-nowrap"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -1952,144 +2020,128 @@ export default function ProfilePage() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-800">Items under this brand</h3>
-                  <button
-                    type="button"
-                    onClick={() => addBrandItem(brand.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-900 text-white rounded-full text-xs hover:bg-black transition-colors"
-                  >
-                    <span>+ Add Item</span>
-                  </button>
-                </div>
-
-                {brand.items.length === 0 && (
-                  <p className="text-xs text-gray-500 mb-2">No items added yet for this brand.</p>
-                )}
-
-                <div className="space-y-4 mt-2">
-                  {brand.items.map((item) => (
-                    <div key={item.id} className="border border-gray-200 rounded-lg p-3">
-                      <div className="flex items-start justify-between gap-4 mb-3">
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-gray-700 mb-1">
-                            Item Name
-                          </label>
-                          <input
-                            type="text"
-                            value={item.name}
-                            onChange={(e) => updateBrandItem(brand.id, item.id, 'name', e.target.value)}
-                            placeholder="e.g., Industrial Pump Model A"
-                            className="w-full px-3 py-1.5 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
-                          />
-                        </div>
+                {/* Existing categories as badges */}
+                {brand.categories.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {brand.categories.map((category) => (
+                      <span
+                        key={category}
+                        className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs border border-blue-200"
+                      >
+                        <span>{category}</span>
                         <button
                           type="button"
-                          onClick={() => removeBrandItem(brand.id, item.id)}
-                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remove item"
+                          onClick={() => removeBrandCategory(brand.id, category)}
+                          className="ml-1 text-blue-500 hover:text-blue-700"
+                          aria-label="Remove category"
                         >
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="15" y1="9" x2="9" y2="15"></line>
-                            <line x1="9" y1="9" x2="15" y2="15"></line>
-                          </svg>
+                          ×
                         </button>
-                      </div>
+                      </span>
+                    ))}
+                  </div>
+                )}
 
-                      <div className="mb-3">
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Description
-                        </label>
-                        <textarea
-                          value={item.description}
-                          onChange={(e) => updateBrandItem(brand.id, item.id, 'description', e.target.value)}
-                          placeholder="Short description of this item..."
-                          rows={2}
-                          className="w-full px-3 py-1.5 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm resize-none"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Brand Catalog (PDF)
-                  </label>
-                  {!brand.catalogUrl ? (
-                    <div className="mt-1">
-                      <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
-                        <div className="flex flex-col items-center justify-center pt-3 pb-4">
-                          <svg className="w-8 h-8 mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                          </svg>
-                          <p className="mb-1 text-xs text-gray-500">
-                            <span className="font-semibold">Click to upload</span> or drag and drop
-                          </p>
-                          <p className="text-[11px] text-gray-500">PDF only (MAX. 10MB)</p>
-                        </div>
-                        <input
-                          type="file"
-                          accept="application/pdf"
-                          onChange={(e) => handleBrandCatalogUpload(brand.id, e)}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  ) : (
-                    <div className="mt-1 p-3 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-shrink-0">
-                          <svg className="w-7 h-7 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                          </svg>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-900 truncate">
-                            {brand.catalogFileName}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            {brand.file && (
-                              <p className="text-[11px] text-gray-500">
-                                {(brand.file.size / (1024 * 1024)).toFixed(2)} MB
-                              </p>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleViewBrandCatalog(brand.id)}
-                              className="text-[11px] text-orange-500 hover:text-orange-600 underline"
-                            >
-                              View Catalog
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBrands((prev) =>
-                            prev.map((b) =>
-                              b.id === brand.id
-                                ? { ...b, file: null, catalogFileName: '', catalogUrl: undefined }
-                                : b,
-                            ),
-                          );
-                        }}
-                        className="ml-3 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Remove catalog"
-                      >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="12" r="10"></circle>
-                          <line x1="15" y1="9" x2="9" y2="15"></line>
-                          <line x1="9" y1="9" x2="15" y2="15"></line>
-                        </svg>
-                      </button>
-                    </div>
-                  )}
-                </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Supplier Catalog Section (only for suppliers) */}
+      {whoAreYou === 'supplier' && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Supplier Catalog</h2>
+              <p className="text-sm text-gray-500">Upload a global catalog PDF for all your brands and categories.</p>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Catalog PDF
+            </label>
+            {uploadingSupplierCatalog ? (
+              <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-center">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="text-sm text-gray-600">Uploading PDF...</p>
+                </div>
+              </div>
+            ) : !supplierCatalog.fileUrl ? (
+              <div className="mt-1">
+                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <svg className="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p className="mb-1 text-sm text-gray-500">
+                      <span className="font-semibold">Click to upload</span> or drag and drop
+                    </p>
+                    <p className="text-xs text-gray-500">PDF only (MAX. 10MB)</p>
+                  </div>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleSupplierCatalogUpload}
+                    className="hidden"
+                    disabled={uploadingSupplierCatalog}
+                  />
+                </label>
+              </div>
+            ) : (
+              <div className="mt-1 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0">
+                    <svg className="w-8 h-8 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {supplierCatalog.fileName}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      {supplierCatalog.file && (
+                        <p className="text-xs text-gray-500">
+                          {(supplierCatalog.file.size / (1024 * 1024)).toFixed(2)} MB
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleViewSupplierCatalog}
+                        disabled={viewingSupplierCatalog}
+                        className="text-xs text-orange-500 hover:text-orange-600 underline disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {viewingSupplierCatalog ? 'Opening...' : 'View Catalog'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={removeSupplierCatalog}
+                  className="ml-3 p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Remove catalog"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                  </svg>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
